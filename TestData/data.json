@@ -1,0 +1,292 @@
+{
+    "chores": [
+        {
+            "days": [
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday"
+            ],
+            "description": "Wash all the dirty dishes in the sink.",
+            "difficulty": "easy",
+            "earnings": 5,
+            "estimated_time": "30 minutes",
+            "frequency": "daily",
+            "id": 1,
+            "location": "kitchen",
+            "materials_needed": [
+                "dirty dishes",
+                "water"
+            ],
+            "name": "Wash dishes",
+            "notes": "Use warm water for better results.",
+            "priority": "moderate",
+            "status": "not_started",
+            "tags": [
+                "daily chores",
+                "kitchen cleaning"
+            ],
+            "tools_required": [
+                "dish soap",
+                "sponge",
+                "dish rack"
+            ]
+        },
+        {
+            "days": [
+                "Wednesday",
+                "Sunday"
+            ],
+            "description": "Empty all trash bins and replace with new bags.",
+            "difficulty": "easy",
+            "earnings": 3,
+            "estimated_time": "15 minutes",
+            "frequency": "twice a week",
+            "id": 2,
+            "location": "",
+            "materials_needed": [
+                "full trash bins"
+            ],
+            "name": "Take out the trash",
+            "notes": "",
+            "priority": "moderate",
+            "status": "not_started",
+            "tags": [
+                "trash disposal"
+            ],
+            "tools_required": [
+                "trash bags"
+            ]
+        },
+        {
+            "days": [
+                "Tuesday"
+            ],
+            "description": "Dust all surfaces and furniture.",
+            "difficulty": "easy",
+            "earnings": 7,
+            "estimated_time": "1 hour",
+            "frequency": "bi-weekly",
+            "id": 3,
+            "location": "",
+            "materials_needed": [
+                "surfaces",
+                "furniture"
+            ],
+            "name": "Dusting",
+            "notes": "Use a damp cloth for better dust removal.",
+            "priority": "low",
+            "status": "not_started",
+            "tags": [
+                "dusting",
+                "household cleaning"
+            ],
+            "tools_required": [
+                "duster",
+                "microfiber cloth"
+            ]
+        },
+        {
+            "days": [
+                "Sunday"
+            ],
+            "description": "Scrub the toilet, sink, and shower.",
+            "difficulty": "medium",
+            "earnings": 8,
+            "estimated_time": "45 minutes",
+            "frequency": "weekly",
+            "id": 4,
+            "location": "bathroom",
+            "materials_needed": [
+                "cleaning products"
+            ],
+            "name": "Clean the bathroom",
+            "notes": "Use gloves and protective eyewear.",
+            "priority": "moderate",
+            "status": "not_started",
+            "tags": [
+                "bathroom cleaning",
+                "weekly chores"
+            ],
+            "tools_required": [
+                "toilet brush",
+                "scrub brush",
+                "cleaning spray"
+            ]
+        },
+        {
+            "days": [
+                "Monday"
+            ],
+            "description": "Wash, dry, and fold the laundry.",
+            "difficulty": "medium",
+            "earnings": 12,
+            "estimated_time": "2 hours",
+            "frequency": "weekly",
+            "id": 5,
+            "location": "laundry room",
+            "materials_needed": [
+                "dirty laundry"
+            ],
+            "name": "Laundry",
+            "notes": "Sort clothes by color and fabric type.",
+            "priority": "moderate",
+            "status": "not_started",
+            "tags": [
+                "laundry",
+                "weekly chores"
+            ],
+            "tools_required": [
+                "washing machine",
+                "dryer",
+                "laundry detergent"
+            ]
+        },
+        {
+            "days": [
+                "Wednesday"
+            ],
+            "description": "Buy groceries for the week.",
+            "difficulty": "medium",
+            "earnings": 10,
+            "estimated_time": "1 hour",
+            "frequency": "weekly",
+            "id": 6,
+            "location": "grocery store",
+            "materials_needed": [
+                "grocery items"
+            ],
+            "name": "Grocery shopping",
+            "notes": "Check pantry and fridge before shopping.",
+            "priority": "moderate",
+            "status": "not_started",
+            "tags": [
+                "grocery shopping",
+                "weekly chores"
+            ],
+            "tools_required": [
+                "grocery list",
+                "shopping cart"
+            ]
+        },
+        {
+            "days": [
+                "Thursday"
+            ],
+            "description": "Clean all windows and glass surfaces.",
+            "difficulty": "medium",
+            "earnings": 15,
+            "estimated_time": "2 hours",
+            "frequency": "monthly",
+            "id": 7,
+            "location": "throughout the house",
+            "materials_needed": [
+                "dirty windows",
+                "cleaning solution"
+            ],
+            "name": "Window cleaning",
+            "notes": "Clean on a cloudy day to avoid streaks.",
+            "priority": "low",
+            "status": "not_started",
+            "tags": [
+                "window cleaning",
+                "monthly chores"
+            ],
+            "tools_required": [
+                "window cleaner",
+                "microfiber cloth",
+                "squeegee"
+            ]
+        },
+        {
+            "days": [
+                "Friday"
+            ],
+            "description": "Vacuum all carpeted areas in the house.",
+            "difficulty": "hard",
+            "earnings": 10,
+            "estimated_time": "1 hour",
+            "frequency": "weekly",
+            "id": 8,
+            "location": "entire household",
+            "materials_needed": [],
+            "name": "Vacuum the floors",
+            "notes": "Check vacuum bag before starting.",
+            "priority": "high",
+            "status": "not_started",
+            "tags": [
+                "weekly chores",
+                "household cleaning"
+            ],
+            "tools_required": [
+                "vacuum cleaner"
+            ]
+        },
+        {
+            "days": [
+                "Saturday"
+            ],
+            "description": "Mow the front and back lawn.",
+            "difficulty": "hard",
+            "earnings": 20,
+            "estimated_time": "1.5 hours",
+            "frequency": "bi-weekly",
+            "id": 9,
+            "location": "outdoor",
+            "materials_needed": [
+                "gasoline",
+                "lawn bags"
+            ],
+            "name": "Mow the lawn",
+            "notes": "Check lawn mower condition before starting.",
+            "priority": "high",
+            "status": "not_started",
+            "tags": [
+                "outdoor chores",
+                "lawn care"
+            ],
+            "tools_required": [
+                "lawn mower",
+                "edger",
+                "trimmer"
+            ]
+        },
+        {
+            "days": [
+                "Monday",
+                "Wednesday",
+                "Thursday"
+            ],
+            "description": "Prepare meals for the week.",
+            "difficulty": "hard",
+            "earnings": 25,
+            "estimated_time": "3 hours",
+            "frequency": "weekly",
+            "id": 10,
+            "location": "kitchen",
+            "materials_needed": [
+                "ingredients"
+            ],
+            "name": "Meal prep",
+            "notes": "Plan meals ahead for efficiency.",
+            "priority": "high",
+            "status": "not_started",
+            "tags": [
+                "meal preparation",
+                "cooking"
+            ],
+            "tools_required": [
+                "cookware",
+                "utensils"
+            ]
+        }
+    ],
+    "user_profile": {
+        "notify": false,
+        "theme": "light",
+        "username": "user1"
+    }
+}
