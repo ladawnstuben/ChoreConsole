@@ -11,10 +11,6 @@
 #include <fstream>
 #include <random>
 #include <sstream>
-#include <iomanip>
-#include <functional>
-#include <algorithm>
-#include <stdexcept>
 #pragma warning( pop )
 
 using json = nlohmann::json;
@@ -26,6 +22,7 @@ const string DATA_FILE_PATH = "TestData\\";
 namespace ChoreApp
 {
 
+  //ENUMS for handing data that should never change only shifted
   enum class DIFFICULTY { EASY, MEDIUM, HARD };
   enum class STATUS { NOT_STARTED, IN_PROGRESS, COMPLETED };
   enum class PRIORITY { LOW, MODERATE, HIGH };
@@ -76,6 +73,7 @@ namespace ChoreApp
   public:
 
     // Constructor checks if "user_profile" key exists and handles it
+    // The constructor initializes the userProfile struct using the JSON object properly
     Client(const json& j)
       : userProfile(j.contains("user_profile") ? j["user_profile"] : json{}) {}
 
@@ -87,18 +85,30 @@ namespace ChoreApp
       };
     }
 
+    // NOT IMPLEMENTED
+    /*
     void modifyProfile() {
       cout << "Modifying Profile..." << endl;
-      cout << "Enter new username: ";
-      getline(cin, userProfile.username);
-      cout << "Enter new last logged in: ";
-      getline(cin, userProfile.last_logged_in);
-      cout << "Enter new preferences (in JSON format): ";
-      string pref_input;
-      getline(cin, pref_input);
-      userProfile.preferences = json::parse(pref_input);
-    }
+      cout << "Current UserName is: " << getUserName() << "\nWould you like to change it? If yes, enter (y) otherwise enter any other character.";
+      char usrNm_input;
+      cin.get(usrNm_input);
+      if (usrNm_input == 'y')
+      {
+        getline(cin, userProfile.username);
+      }
 
+      cout << "Current theme is: " << getTheme() << "\nWould you like to toggle it? If yes, enter (y) otherwise enter any other character.";
+      char pref_input;
+      cin.get(pref_input);
+
+      if (pref_input == 'y')
+      {
+        toggleNotify();
+      }
+    }
+    */
+
+    // Print out the client's profile information
     string printProfile() const {
       string result;
       result += "Username: " + userProfile.username + "\n";
@@ -108,6 +118,8 @@ namespace ChoreApp
       return result;
     }
 
+    // NOT IMPLEMENTED
+    /*
     void setUsername() {
       string result;
       getline(cin, userProfile.username);
@@ -116,11 +128,12 @@ namespace ChoreApp
         setUsername();  // Recursive call if input is empty
       }
     }
-   
+    */
 
+    /*
     void setNotify()
     {
-      
+      // needs to work with wxWidgets
       //cout << "Please enter your notification preference (true/false): ";
       string notify;
       getline(cin, notify);
@@ -131,9 +144,9 @@ namespace ChoreApp
       }
       userProfile.preferences.notify = notify == "true";
     }
- 
+    */
 
-  
+    /*
     void setTheme()
     {
       // needs to work with wxWidgets
@@ -145,13 +158,15 @@ namespace ChoreApp
         setTheme();  // Recursive call if input is invalid
       }
     }
-   
+    */
 
+    
     string getUserName() const
     {
       return userProfile.username;
     }
-
+    //NOT IMPLEMENTED
+    /*
     string getLastLoggedIn() const
     {
       return userProfile.last_logged_in;
@@ -166,7 +181,7 @@ namespace ChoreApp
     {
       return userProfile.preferences.theme.empty() ? "Default" : userProfile.preferences.theme;
     }
-
+    */
     // before calling, tell user to enter a username with wxWidgets
     // needs to work with wxWidgets
     void setUsername(const string& newUserName) {
@@ -177,6 +192,8 @@ namespace ChoreApp
       userProfile.last_logged_in = userProfile.getCurrentDateTime();
     }
 
+    // NOT IMPLEMENTED
+    /*
     void toggleNotify()
     {
       userProfile.preferences.notify = !userProfile.preferences.notify;
@@ -193,15 +210,19 @@ namespace ChoreApp
         userProfile.preferences.theme = "dark";
       }
     }
-
+    
     // Friend declaration for the insertion operator
     friend ostream& operator<<(ostream& os, const Client& client);
+    */
   };
 
+  // NOT IMPLEMENTED
+  /*
   ostream& operator<<(ostream& os, const Client& client) {
     os << client.printProfile();  // Assuming printProfile() returns the formatted string
     return os;
   }
+  */
 
   //*********************************************************************************
 
@@ -262,6 +283,8 @@ namespace ChoreApp
     // Virtual destructor
     virtual ~Chore() {}
 
+    // NOT IMPLEMENTED
+    /*
     // Method to start a chore, modifying its status based on current state
     virtual void startChore() {
       if (Status == STATUS::NOT_STARTED) {
@@ -298,6 +321,7 @@ namespace ChoreApp
         Status = STATUS::NOT_STARTED;
       }
     }
+    */
 
     // Serialize the chore object to JSON
     virtual json toJSON() const {
@@ -321,6 +345,7 @@ namespace ChoreApp
     }
 
     // Method to return a formatted string containing all chore attributes for display
+    // Uses helper functions to format enum values and vectors
     virtual string PrettyPrintClassAttributes() const {
       string result = "Chore ID: " + to_string(id) + "\n"
         "Name: " + name + "\n"
@@ -342,6 +367,8 @@ namespace ChoreApp
     }
 
     // Method to modify chore name and description interactively
+    // NOT IMPLEMENTED
+    /*
     virtual void modifyChore() {
       cout << "Modifying Chore..." << endl;
       cout << "Enter new chore name: ";
@@ -349,7 +376,9 @@ namespace ChoreApp
       cout << "Enter new chore description: ";
       getline(cin, description);
     }
+    */
 
+    // Method to print a simple representation of the chore
     string simplePrint() const {
       string result = "Chore ID: " + to_string(id) + "\n"
         + "Name: " + name + "\n"  // Convert wxString to string
@@ -382,6 +411,12 @@ namespace ChoreApp
         this->Priority == other.Priority);
     }
 
+    // New overloaded inequality operator
+    bool operator!=(const Chore& other) const {
+      return !(*this == other);
+    }
+
+    //ONLY FEW GETTERS AND SETTERS ARE IMPLEMENTED IN THIS VERSION
     // getter and setter methods incorporating triggerUpdate where needed
     int getId() const {
       return id;
@@ -397,7 +432,6 @@ namespace ChoreApp
 
     void setName(const string& newName) {
       name = newName;
-      ;
     }
 
     string getDescription() const {
@@ -611,6 +645,14 @@ namespace ChoreApp
   struct CompareID {
     bool operator()(const shared_ptr<Chore>& a, const shared_ptr<Chore>& b) const {
       return a->getId() < b->getId();
+    }
+  };
+
+  struct CompareName
+  {
+    bool operator()(const shared_ptr<Chore>& a, const shared_ptr<Chore>& b) const
+    {
+      return a->getName() < b->getName();
     }
   };
 
@@ -884,7 +926,11 @@ namespace ChoreApp
   private:
     vector<shared_ptr<T>> items;  // A vector to store shared pointers to objects of type T
 
+
+
   public:
+    Container() {}  // Correct way, automatically initializes an empty vector of shared_ptr<T>
+
     // Generic bubble sort using comparator
     template<typename Comparator>
     void sortItems(Comparator comp, bool ascending = true) {
@@ -904,9 +950,6 @@ namespace ChoreApp
       catch (const exception& e) {
         cerr << "Exception thrown in sortItems: " << e.what() << endl;  // Output any exceptions to standard error
       }
-    }
-    auto find(std::function<bool(const shared_ptr<T>&)> predicate) -> decltype(items.begin()) {
-        return std::find_if(items.begin(), items.end(), predicate);
     }
 
     // Templated search method
@@ -981,14 +1024,25 @@ namespace ChoreApp
     // Display all items in the container
     void displayAllItems() const {
       for (const auto& item : items) {  // Loop through all items
-        cout << "Chore: " << item->getName() << " (ID: " << item->getID() << ")" << endl;  // Display each item's name and ID
+        cout << "Chore: " << item->getName() << " (ID: " << item->getId() << ")" << endl;  // Display each item's name and ID
       }
     }
 
     string returnAllItems() {
       string info;
       for (const auto& item : items) {
-		  info += item->simplePrint() + "\n";
+        // Convert the integer ID to a string before concatenation
+        info += "Chore: " + item->getName() + " (ID: " + std::to_string(item->getId()) + ")\n";
+      }
+      return info;
+    }
+
+    string displayAllItemsAllAttributes()
+    {
+      string info;
+      for (const auto& item : items)
+      {
+        info += item->PrettyPrintClassAttributes() + "\n\n";
       }
       return info;
     }
@@ -1027,884 +1081,184 @@ namespace ChoreApp
     auto end() const -> decltype(items.end()) const {
       return items.end();
     }
- 
   };
 
   //*********************************************************************************
 
- class ChoreDoer {
-public:
-  // Using Container that specifically manages shared_ptr<Chore>
-  Container<std::shared_ptr<Chore>> assignedChores;
-
-  // Constructor to initialize a ChoreDoer with a name
-  ChoreDoer(const string& name) : name(name), age(0), choreAmount(0), totalEarnings(0) {}
-
-  // Method to assign a chore to the doer
-  void assignChore(const shared_ptr<Chore>& chore) {
-    assignedChores.push_back(chore);  // Add the chore to the container correctly
-    choreAmount++;  // Increment the count of assigned chores
-  }
-
-  string getName() const { return name; }
-
-  void setName(const string &newName) { name = newName; }
-
-  int getTotalEarnings() const { return totalEarnings; }
-
-  int getChoreAmount() const { return choreAmount; }
-
-  void resetChoreAmount() { choreAmount = 0; }
-
-  void decreaseChoreAmount() { choreAmount--; }
-
-  string printChoreDoer() const {
-    stringstream result;
-    result << "Chore Doer: " << name << "\n"
-           << "Total Earnings: $" << totalEarnings << "\n"
-           << "Chore Amount: " << choreAmount;
-    return result.str();
-  }
-
-  void sortAssignedChoresByEarnings(bool ascending = true) {
-    assignedChores.sortItems(CompareEarnings(), ascending);
-  }
-
-  void sortAssignedChoresByDifficulty(bool ascending = true) {
-    assignedChores.sortItems(CompareDifficulty(), ascending);
-  }
-
-  void sortAssignedChoresByID(bool ascending = true) {
-    assignedChores.sortItems(CompareID(), ascending);
-  }
-
-  void startChore(int choreId) {
-    auto chore = assignedChores.find([choreId](const shared_ptr<Chore>& c) { return c->getId() == choreId; });
-    if (chore) chore->startChore();
-  }
-
-  void completeChore(int choreId) {
-    auto chore = assignedChores.find([choreId](const shared_ptr<Chore>& c) { return c->getId() == choreId; });
-    if (chore) {
-      chore->completeChore();
-      totalEarnings += chore->getEarnings();
-    }
-  }
-
-  void resetChore(int choreId) {
-    auto chore = assignedChores.find([choreId](const shared_ptr<Chore>& c) { return c->getId() == choreId; });
-    if (chore) chore->resetChore();
-  }
-
-  string returnAssignedChores() {
-    return assignedChores.returnAllItems();
-  }
-
-  friend ostream& operator<<(ostream& os, const ChoreDoer& chDoer);
-
-private:
-  string name;
-  int choreAmount;
-  int age;
-  int totalEarnings;
-};
-
-ostream& operator<<(ostream& os, const ChoreDoer& chDoer) {
-  os << chDoer.printChoreDoer();
-  return os;
-}
-
-  //*********************************************************************************
-  class ChoreManager {
+  // Definition of the ChoreDoer class, which manages a list of chores and related information
+  class ChoreDoer {
   public:
-    // Constructor for ChoreManager that initializes its internal state with file data
-    ChoreManager(string fileName) {
-      try {
-        dynamicFile = fileName; // Save the filename for later use
+    // Container to store assigned chores
+    Container<Chore> assignedChores;
 
-        // Seed the random number generator for any randomized operations
-        srand(static_cast<unsigned int>(time(nullptr)));
-
-        ifstream file(fileName); // Open the specified file
-        if (file.is_open()) {
-          // Parse the contents of the file into a JSON object if not empty
-          if (j.is_null()) {
-            j = json::parse(file);
-          }
-          file.close(); // Always close the file after opening
-        }
-        else {
-          cerr << "Failed to open file: " << fileName << endl; // Error message if file cannot be opened
-        }
-
-        // Initialize client with the user profile from the JSON data
-        if (j.contains("user_profile")) {
-          if (client->getUserName() == "DefaultUser") {
-            cout << "Please enter a User Name";
-            string usrName;
-            getline(cin, usrName);
-            client->setUsername(usrName);
-          }
-        }
-        choreCount = 0; // Initialize the chore count
-        loadChores(); // Load chores from the JSON object
-      }
-      catch (const json::exception& e) {
-        cerr << "JSON Error: " << e.what() << endl; // Handle JSON parsing errors
-        throw; // Rethrow the exception for external handling
-      }
-      catch (const ifstream::failure& e) {
-        cerr << "File Error: " << e.what() << endl; // Handle file opening errors
-        throw;
-      }
+    // Constructor to initialize a ChoreDoer with a name
+    ChoreDoer(const string& name) : name(name) {
+      age = 0;  // Default age is set to 0
+      choreAmount = 0;  // Initialize the count of assigned chores to 0
+      totalEarnings = 0;  // Initialize total earnings from completed chores to 0
+      assignedChores = Container<Chore>();  // Initialize the container for managing chores
+      id = 0;
     }
 
-    // Destructor to clear resources
-    ~ChoreManager() {
-      clearAll();
+    // Method to assign a chore to the doer
+    void assignChore(const shared_ptr<Chore>& chore) {
+      assignedChores.push_back(chore);  // Add the chore to the container
+      choreAmount++;  // Increment the count of assigned chores
     }
 
-    // Method to load chores from the JSON object into the container
-    void loadChores() {
-      try {
-        if (j.contains("chores") && j["chores"].is_array()) {
-          for (auto& choreJson : j["chores"]) {
-            string difficulty = choreJson.value("difficulty", "unknown"); // Get the difficulty level from the JSON
-            shared_ptr<Chore> chore;
-
-            // Create a specific type of Chore based on the difficulty level
-            if (difficulty == "easy") {
-              chore = make_shared<EasyChore>(choreJson);
-            }
-            else if (difficulty == "medium") {
-              chore = make_shared<MediumChore>(choreJson);
-            }
-            else if (difficulty == "hard") {
-              chore = make_shared<HardChore>(choreJson);
-            }
-            else {
-              cerr << "Unknown difficulty level: " << difficulty << endl;
-              continue;
-            }
-
-            Chores.push_back(chore); // Add chore to the container
-            choreCount++; // Increment the count of chores
-          }
-        }
-      }
-      catch (const json::parse_error& e) {
-        cerr << "JSON parse error: " << e.what() << endl;
-      }
-      catch (const json::out_of_range& e) {
-        cerr << "JSON out of range error: " << e.what() << endl;
-      }
-      catch (const json::type_error& e) {
-        cerr << "JSON type error: " << e.what() << endl;
-      }
-      catch (const exception& e) {
-        cerr << "Standard exception: " << e.what() << endl;
-      }
+    void removeChore(int index) {
+      assignedChores.deleteItem(index);
     }
 
-    // Method to modify either user profile data or chore data interactively
-    void modifyData() {
-      cout << "1: Modify User Profile\n2: Modify Chores\nChoose option: ";
-      int choice;
-      cin >> choice;
-      cin.ignore(); // clear buffer after reading number
-
-      switch (choice) {
-      case 1:
-        client->modifyProfile();
-        break;
-      case 2:
-        cout << "Enter chore index to modify: ";
-        int index;
-        cin >> index;
-        cin.ignore();
-        if (index >= 0 && index < Chores.size()) {
-          Chores[index]->modifyChore();
-        }
-        else {
-          cout << "Invalid index!" << endl;
-        }
-        break;
-      default:
-        cout << "Invalid choice!" << endl;
-      }
-      saveData(); // Save changes to file
+    int getId() const
+    {
+      return id;
+    }
+    // Getter method to retrieve the chore doer's name
+    string getName() const {
+      return name;
     }
 
-    // Method to output all data including chore assignments and user profile to a file
-    void outputChoreAssignmentsToFile(const string& outputPath) {
-      json output;
-
-      // Include client's user profile data
-      output["user_profile"] = client->toJSON();
-
-      // Include chore assignments for each chore doer
-      output["chore_doers"] = json::array();
-      for (const auto& doer : ChoreDoers) {
-        json doerJson;
-        doerJson["name"] = doer.getName();
-        doerJson["chores"] = json::array();
-        for (const auto& chore : doer.assignedChores) {
-          doerJson["chores"].push_back(chore->toJSON());
-        }
-        output["chore_doers"].push_back(doerJson);
-      }
-
-      /*
-      // Add leftover chores
-      output["leftover_chores"] = json::array();
-      for (const auto& chore : LeftoverChores) {
-        output["leftover_chores"].push_back(chore->toJSON());
-      }
-      */
-
-      // Write to file with pretty formatting
-      ofstream outFile(outputPath);
-      if (!outFile.is_open()) {
-        throw runtime_error("Could not open file to write chore assignments.");
-      }
-      outFile << setw(4) << output; // Pretty print with indent of 4 spaces
-      outFile.close();
+    void setName (const string &newName)
+    {
+      name = newName;
     }
 
-    // Output all data to the console or to file
-    json toJSON() const {
-      json output;
-      if (client) {
-        output["user_profile"] = client->toJSON();
-      }
-
-      for (const auto& chore : Chores) {
-        output["chores"].push_back(chore->toJSON());
-      }
-      return output;
+    // Getter method to retrieve the total earnings accumulated from completed chores
+    int getTotalEarnings() const {
+      return totalEarnings;
     }
 
-    // saveData method to overwrite the original data.json file for chores and user data
-    void saveData() {
-      // Reset our json object because json is getting overwritten
-      j.clear();
-
-      // All data changed through class functions modify or set(attribute) or add/create chore  will be saved here
-      // Add new data to json object with updated chore list
-      j = toJSON();
-
-      // Overwrites original file
-      ofstream file(dynamicFile);
-      if (file) {
-        file << setw(4) << j << endl;
-      }
-      else {
-        cerr << "Error saving file " << dynamicFile;
-      }
-      file.close();
+    // Getter method to retrieve the number of chores assigned to the doer
+    int getChoreAmount() const {
+      return choreAmount;
     }
 
-    // Display all chores in the container
-    string displayChoreList() {
-      string info;
-      for (const auto& chore : Chores) {
-        info += chore->simplePrint(); //Only returns few attributes instead of all attributes
-      }
-      return info;
-    }
-
-    // Returns assigned chores for a chosen chore doer
-    std::string displayAssignedChores(const std::string& doerName) {
-      auto doer = std::find_if(ChoreDoers.begin(), ChoreDoers.end(), [&doerName](const std::shared_ptr<ChoreDoer>& d) {
-        return d->getName() == doerName;
-        });
-
-      if (doer != ChoreDoers.end()) {
-        std::string info = "Chore Doer: " + doer->getName() + " has chores:\n";
-        info += doer->returnAssignedChores();  // Use Container's method
-        return info;
-      }
-
-      return "Chore Doer not found.";
-    }
-
-    // Returns assigned chores for all chore doers
-    string displayAllChoreAssignments() {
-      std::string info;
-      for (auto& doer : ChoreDoers) {
-        info += "Chore Doer: " + doer.getName() + " has chores:\n";
-        info += doer.returnAssignedChores();  // Use Container's method
-        info += "\n";  // Add a newline for separation between doers
-      }
-      return info;  // Return the complete string
-    }
-
-    // Method to delete a chore from the available chore list by ID
-    void deleteChoreFromAvailable(int choreId) {
-      Chores.deleteItem(choreId);
-    }
-
+    // Used when all chores are cleared from ChoreDoers assigned chores
+    // NOT IMPLEMENTED
     /*
-    // Method to delete a chore from leftover chores by ID
-    void deleteLeftoverChore(int choreId) {
-      LeftoverChores.deleteItem(choreId);
+    void resetChoreAmount()
+    {
+      choreAmount = 0;
     }
-    */
 
-    // Method to delete a chore from any chore doer's assigned list by ID
-    void deleteChoreFromAnyDoer(int choreId) {
-      for (auto& doer : ChoreDoers) {
-        doer.assignedChores.deleteItem(choreId);
+    // Used when a chore is removed from ChoreDoers assigned chores
+    void decreaseChoreAmount()
+    {
+      if (choreAmount > 0)
+      {
+        choreAmount--;
+      }
+    }
+    
+
+    // Method to generate a formatted string displaying chore doer's details
+    string printChoreDoer() const {
+      string result = "Chore Doer: " + name + "\n";  // Start with the chore doer's name
+      result += "Total Earnings: $" + to_string(totalEarnings) + "\n";  // Add total earnings
+      result += "Chore Amount: " + to_string(choreAmount) + "\n";  // Add number of chores assigned
+      return result;
+    }
+
+    // Sort assigned chores by earnings
+    void sortAssignedChoresByEarnings(bool ascending = true) {
+      if (!assignedChores.empty())
+      {
+        assignedChores.sortItems(CompareEarnings(), ascending);
       }
     }
 
-    // Method to add a new chore doer to the system
-    void addChoreDoer(const string& name) {
-      ChoreDoers.push_back(ChoreDoer(name));
-    }
-
-    // Method to delete a chore doer from the system by name
-    void deleteChoreDoer(const string& name) {
-      try {
-        for (auto it = ChoreDoers.begin(); it != ChoreDoers.end(); ++it) {
-          if (it->getName() == name) {
-            ChoreDoers.erase(it);
-            break;
-          }
-        }
-      }
-      catch (const exception& e) {
-        cerr << "Exception thrown in removeChoreDoer: " << e.what() << endl;
+    // Sort assigned chores by difficulty
+    void sortAssignedChoresByDifficulty(bool ascending = true) {
+      if (!assignedChores.empty())
+      {
+        assignedChores.sortItems(CompareDifficulty(), ascending);
       }
     }
 
-    // Method to add a new chore to the system from a JSON object
-    void addChore(const json& choreJson) {
-      shared_ptr<Chore> chore;
-
-      if (choreJson.is_null()) {
-        cerr << "Invalid chore JSON." << endl;
-        return;
-      }
-      if (choreJson.contains("difficulty") && choreJson["difficulty"].is_string()) {
-        string difficulty = choreJson["difficulty"].get<string>();
-
-        if (difficulty == "easy") {
-          chore = make_shared<EasyChore>(choreJson);
-        }
-        else if (difficulty == "medium") {
-          chore = make_shared<MediumChore>(choreJson);
-        }
-        else if (difficulty == "hard") {
-          chore = make_shared<HardChore>(choreJson);
-        }
-      }
-      Chores.push_back(chore);
-      saveData(); // Save new chore and update data
-    }
-
-    /*
-    // Method to move a chore to leftover chores list by ID
-    void moveChoreToLeftover(int choreId) {
-      for (auto& doer : ChoreDoers) {
-        doer.assignedChores.moveItemToAnotherContainer(choreId, LeftoverChores);
+    // Sort assigned chores by ID
+    void sortAssignedChoresByID(bool ascending = true) {
+      if (!assignedChores.empty())
+      {
+        assignedChores.sortItems(CompareID(), ascending);
       }
     }
 
-    // Method to move a chore from leftover chores to a specific chore doer
-    void moveChoreFromLeftoverToDoer(const string& toDoer, int choreId) {
-      for (auto& doer : ChoreDoers) {
-        if (doer.getName() == toDoer) {
-          LeftoverChores.moveItemToAnotherContainer(choreId, doer.assignedChores);
+    // Method to start a chore based on its ID
+    void startChore(int choreId) {
+      for (auto& chore : assignedChores) {
+        if (chore->getId() == choreId) {
+          chore->startChore();  // Call startChore on the matching chore
           break;
         }
-        cout << "Chore Doer not found." << endl;
       }
+    }
+
+    // Method to complete a chore based on its ID
+    void completeChore(int choreId) {
+      for (auto& chore : assignedChores) {
+        if (chore->getId() == choreId) {
+          if (chore->getStatus() == STATUS::IN_PROGRESS || chore->getStatus() == STATUS::NOT_STARTED) {
+            chore->completeChore();  // Complete the chore
+            totalEarnings += chore->getEarnings();  // Update total earnings
+            cout << "Chore " << chore->getName() << " completed. Total earnings now: $" << totalEarnings << endl;
+            break;
+          }
+          cout << "Chore " << chore->getName() << " is already completed. No action taken." << endl;
+        }
+      }
+    }
+
+    // Method to reset a chore based on its ID
+    void resetChore(int choreId) {
+      for (auto& chore : assignedChores) {
+        if (chore->getId() == choreId) {
+          if (chore->getStatus() == STATUS::COMPLETED || chore->getStatus() == STATUS::IN_PROGRESS) {
+            cout << "Resetting Chore: " << chore->getName() << endl;
+            chore->resetChore();
+          }
+          else {
+            cout << "Chore is already in the initial state (Not Started)." << endl;
+          }
+          return;
+        }
+      }
+      cout << "Chore ID " << choreId << " not found among assigned chores." << endl;
     }
     */
 
-    // Method to move a chore between two chore doers
-    void moveChoreBetweenDoers(const string& fromDoer, const string& toDoer, int choreId) {
-      bool found = false;
-      for (auto& doer : ChoreDoers) {
-        if (doer.getName() == fromDoer) {
-          for (auto& targetDoer : ChoreDoers) {
-            if (targetDoer.getName() == toDoer) {
-              doer.assignedChores.moveItemToAnotherContainer(choreId, targetDoer.assignedChores);
-              found = true;
-              break;
-            }
-          }
-        }
-      }
-      if (!found) {
-        cout << "Chore or Chore Doer not found." << endl;
-      }
+    string returnAssignedChores()
+    {
+      return assignedChores.returnAllItems();
     }
 
-    // Method to manually assign a chore to a ChoreDoer
-    void assignChoreDoer(int choreId, const std::string& doerName) {
-      auto chore = std::find_if(Chores.begin(), Chores.end(), [choreId](const std::shared_ptr<Chore>& c) {
-        return c->getId() == choreId;
-        });
-      if (chore != Chores.end()) {
-        auto doer = std::find_if(ChoreDoers.begin(), ChoreDoers.end(), [&doerName](const std::shared_ptr<ChoreDoer>& d) {
-          return d->getName() == doerName;
-          });
+    // Overloaded insertion operator to output the details of the ChoreDoer
+    friend ostream& operator<<(ostream& os, const ChoreDoer& chDoer);
 
-        if (doer != ChoreDoers.end()) {
-          doer->assignChore(*chore);
-        }
-        else {
-          std::cerr << "ChoreDoer " << doerName << " not found." << std::endl;
-        }
-      }
-      else {
-        std::cerr << "Chore ID " << choreId << " not found." << std::endl;
-      }
-    }
+  private:
+    string name;  // Name of the chore doer
+    int choreAmount;  // Number of chores assigned to the doer
+    int age;  // Age of the chore doer, not implemented in full
+    int totalEarnings;  // Total earnings from chores completed by the doer
+    int id;
+  };
 
-    // Method to assign chores randomly to chore doers
-    void assignChoresRandomly() {
-      try {
-        // Check if there are chores to assign
-        if (Chores.empty()) {
-          std::cout << "No chores to assign." << std::endl;
-          return;
-        }
-
-        // Check if there are chore doers available
-        if (ChoreDoers.empty()) {
-          std::cout << "No chore doers available." << std::endl;
-          return;
-        }
-
-        // Create a random engine; you could also use default_random_engine
-        std::random_device rd;
-        std::mt19937 g(rd());
-
-        // Shuffle the chores using the random engine
-        std::ranges::shuffle(Chores.begin(), Chores.end(), g);
-
-        size_t choreIndex = 0;
-        // Loop over each chore and try to assign it to a chore doer
-        while (choreIndex < Chores.size()) {
-          for (auto& doer : ChoreDoers) {
-            if (choreIndex < Chores.size()) {
-              doer.assignChore(Chores[choreIndex++]);
-            }
-            else {
-              break; // Break if there are no more chores to assign
-            }
-          }
-        }
-      }
-      catch (const std::exception& e) {
-        std::cout << "Exception thrown in assignChoresRandomly: " << e.what() << std::endl;
-      }
-    }
-
-    // Method to create a minimal chore structure with initialized attributes
-    void createMinimalChore() {
-      std::string name, difficulty, priority, multitasking_tips, input;
-      json choreJson;
-
-      // Automatically set chore ID
-      static int choreId = 1;  // Static counter to automatically increment chore IDs
-      choreJson["id"] = choreId++;
-
-      std::cout << "Enter chore name: ";
-      std::getline(std::cin, name);
-      choreJson["name"] = name;
-
-      // Automatically set other attributes
-      choreJson["description"] = "Standard description";
-      choreJson["status"] = "not started";
-      choreJson["frequency"] = "weekly";
-      choreJson["estimated_time"] = "1 hour";
-      choreJson["earnings"] = 10;  // Default earning
-      choreJson["days"] = std::vector<std::string>{ "Monday", "Wednesday" };
-      choreJson["location"] = "Home";
-      choreJson["tools_required"] = std::vector<std::string>{};
-      choreJson["materials_needed"] = std::vector<std::string>{};
-      choreJson["notes"] = "No additional notes";
-      choreJson["tags"] = std::vector<std::string>{ "general" };
-
-      // Set Difficulty
-      std::cout << "Enter difficulty (easy, medium, hard): ";
-      std::getline(std::cin, difficulty);
-      while (difficulty != "easy" && difficulty != "medium" && difficulty != "hard") {
-        std::cout << "Invalid difficulty. Please enter 'easy', 'medium', or 'hard': ";
-        std::getline(std::cin, difficulty);
-      }
-      choreJson["difficulty"] = difficulty;
-
-      // Set Priority
-      std::cout << "Enter priority (low, moderate, high): ";
-      std::getline(std::cin, priority);
-      while (priority != "low" && priority != "moderate" && priority != "high") {
-        std::cout << "Invalid priority. Please enter 'low', 'moderate', or 'high': ";
-        std::getline(std::cin, priority);
-      }
-      choreJson["priority"] = priority;
-
-      // Conditional inputs based on difficulty
-      if (difficulty == "easy") {
-        std::cout << "Enter multitasking tips for easy chores: ";
-        std::getline(std::cin, multitasking_tips);
-        choreJson["multitasking_tips"] = multitasking_tips;
-      }
-      else if (difficulty == "medium") {
-        std::cout << "Enter variations for medium chores (comma separated): ";
-        std::getline(std::cin, input);
-        choreJson["variations"] = input;  // Assuming simple string, adjust if JSON array needed
-      }
-      else if (difficulty == "hard") {
-        std::vector<json> subtasks;
-        char choice = 'y';
-        while (choice == 'y') {
-          json subtask;
-          std::string subtaskName, subtaskTime;
-          int subtaskEarnings;
-
-          std::cout << "Enter a name for one subtask: ";
-          std::getline(std::cin, subtaskName);
-          subtask["name"] = subtaskName;
-
-          std::cout << "Enter estimated time for the subtask: ";
-          std::getline(std::cin, subtaskTime);
-          subtask["estimated_time"] = subtaskTime;
-
-          std::cout << "Enter earnings for the subtask (integer value): ";
-          std::cin >> subtaskEarnings;
-          subtask["earnings"] = subtaskEarnings;
-
-          std::cin.ignore();  // Clear newline character after single char input
-          subtasks.push_back(subtask);
-
-          std::cout << "Add another subtask? (y/n): ";
-          std::cin >> choice;
-          std::cin.ignore();  // Clear newline character after single char input
-        }
-        choreJson["subtasks"] = subtasks;
-      }
-
-      // Add the chore to the chore list
-      addChore(choreJson);
-    }
-
-    // Method to create a full-fledged chore with all details
-    void createFullChore() {
-      // Basic chore details
-      string name, description, frequency, estimated_time, difficulty, days, location,
-        tools_required, materials_needed, priority, notes, status, tags, multitasking_tips,
-        earningsInput, input;
-      double earnings;
-
-      // Variables for handling unique attributes (Easy, Medium, Hard)
-      json choreJson;
-      char choice;
-      //Id
-      choreJson["id"] = choreCount++;
-
-      //Name
-      cout << "Enter chore name: ";
-      getline(cin, name);
-      choreJson["name"] = name.empty() ? "" : name;
-
-      //Description
-      cout << "Enter chore description: ";
-      getline(cin, description);
-      choreJson["description"] = description.empty() ? "" : description;
-
-      //Frequency
-      cout << "Enter chore frequency (e.g., daily, weekly): ";
-      getline(cin, frequency);
-      choreJson["frequency"] = frequency.empty() ? "" : frequency;
-
-      //Estimated_time
-      cout << "Enter estimated time for chore completion: ";
-      getline(cin, estimated_time);
-      choreJson["estimated_time"] = estimated_time.empty() ? "" : estimated_time;
-
-      // Handle earnings input with robust validation
-      // If not entered correctly -> re-enter
-      while (true) {
-        cout << "Enter earnings for chore (integer value): ";
-        getline(cin, earningsInput);
-        try {
-          earnings = stoi(earningsInput);
-          choreJson["earnings"] = earnings;
-          break;  // Break out of the loop if stoi succeeds
-        }
-        catch (const exception& e) {  // Catching all exceptions
-          cout << "Invalid input for earnings. Please enter a valid integer." << e.what() << endl;
-        }
-      }
-
-      //Days
-      cout << "Enter days when the chore should be performed (comma separated): ";
-      getline(cin, days);
-      choreJson["days"] = days.empty() ? json::array() : json::parse("[" + days + "]");
-
-      //Location
-      cout << "Enter chore location: ";
-      getline(cin, location);
-      choreJson["location"] = location.empty() ? json::array() : json::parse("[" + location + "]");
-
-      //Tools_required
-      cout << "Enter tools required (comma separated): ";
-      getline(cin, tools_required);
-      choreJson["tools_required"] = tools_required.empty() ? json::array() : json::parse("[" + tools_required + "]");
-
-      //Materials_needed
-      cout << "Enter materials needed (comma separated): ";
-      getline(cin, materials_needed);
-      choreJson["materials_needed"] = materials_needed.empty() ? json::array() : json::parse("[" + materials_needed + "]");
-
-      //Notes
-      cout << "Enter any additional notes: ";
-      getline(cin, notes);
-      choreJson["notes"] = notes.empty() ? "" : notes;
-
-      //Tags
-      cout << "Enter tags for the chore (comma separated): ";
-      getline(cin, tags);
-      choreJson["tags"] = tags.empty() ? json::array() : json::parse("[" + tags + "]");
-
-      //Difficulty
-      //If not entered correctly -> re-enter
-      cout << "Enter difficulty (easy, medium, hard): ";
-      getline(cin, difficulty);
-      while (difficulty != "easy" && difficulty != "medium" && difficulty != "hard" && !difficulty.empty()) {
-        cout << "Invalid difficulty. Please enter 'easy', 'medium', or 'hard': ";
-        getline(cin, difficulty);
-      }
-      choreJson["difficulty"] = difficulty.empty() ? "" : difficulty;
-
-      //Priority
-      //If not entered correctly -> re-enter
-      cout << "Enter priority (low, moderate, high): ";
-      getline(cin, priority);
-      while (priority != "low" && priority != "moderate" && priority != "high" && !priority.empty()) {
-        cout << "Invalid priority. Please enter 'low', 'moderate', or 'high': ";
-        getline(cin, priority);
-      }
-      choreJson["priority"] = priority.empty() ? "" : priority;
-
-      //Status
-      //If not entered correctly -> re-enter
-      cout << "Enter status (not started, in progress, completed): ";
-      getline(cin, status);
-      while (status != "not started" && status != "in progress" && status != "completed" && !status.empty()) {
-        cout << "Invalid status. Please enter 'not started', 'in progress', or 'completed': ";
-        getline(cin, status);
-      }
-      choreJson["status"] = status.empty() ? "" : status;
-
-      // Unique attributes based on difficulty
-      // EASY
-      if (difficulty == "easy") {
-        cout << "Enter multitasking tips for easy chore: ";
-        getline(cin, multitasking_tips);
-        choreJson["multitasking_tips"] = multitasking_tips.empty() ? "" : multitasking_tips;
-      }
-      // MEDIUM
-      else if (difficulty == "medium") {
-
-        cout << "Are there any variations? Enter 'y' for yes or 'n' for no: ";
-        cin >> choice;
-
-        if (choice == 'y')
-        {
-          cout << "Enter variations for medium chore (comma separated): ";
-          cin.ignore();
-          getline(cin, input);
-          choreJson["variations"] = input.empty() ? json::array() : json::parse("[" + input + "]");
-        }
-      }
-      // HARD
-      else if (difficulty == "hard") {
-        json subtask;
-        string subtaskName;
-        string subtaskTime;
-        int subtaskEarnings;
-
-        cout << "Are there any subtasks? Enter 'y' for yes or 'n' for no: ";
-        cin >> choice;
-
-        if (choice == 'y')
-        {
-          cout << "Enter a name for one subtask: ";
-          getline(cin, subtaskName);
-
-          cout << "Enter estimated time for the subtask: ";
-          getline(cin, subtaskTime);
-
-          // Handle earnings input with robust validation
-          while (true) {
-            cout << "Enter earnings for chore (integer value) or whole dollar amount: ";
-
-            try {
-              cin >> subtaskEarnings;
-              choreJson["earnings"] = subtaskEarnings; // If not int -> catch exception -> repeat loop
-              break;  // Break out of the loop if stoi succeeds
-            }
-            catch (const exception& e) {  // Catching all exceptions
-              cout << "Invalid input for earnings. Please enter a valid integer." << e.what() << endl;
-            }
-          }
-
-          // Save the rest of subtask
-          subtask["name"] = subtaskName.empty() ? "" : subtaskName;
-          subtask["estimated_time"] = subtaskTime.empty() ? "" : subtaskTime;
-          subtask["earnings"] = to_string(subtaskEarnings).empty() ? 0 : subtaskEarnings;
-          choreJson["subtasks"] = json::array({ subtask });
-        }
-        // If n is entered, create empty subtask
-        else
-        {
-          cout << "No subtasks added." << endl;
-          choreJson["subtasks"] = json::array(); // should be empty
-        }
-      }
-
-      // Add the chore to the chore list and save file
-      addChore(choreJson);
-      cout << "Chore added successfully!" << endl;
-    }
-
-    //Function wrapper for templated sort function
-    template<typename Comparator>
-    void sortChores(Comparator comp, bool ascending = true) {
-      try
-      {
-        Chores.sortItems(comp, ascending);
-      }
-      catch (const exception& e)
-      {
-        cerr << "Exception caught in sortChores: " << e.what() << endl;
-      }
-    }
-
-    void performSearchByID(int id) {
-      auto resultsById = Chores.searchItem<int>(id, matchById);
-      if (resultsById.empty()) {
-        // Search through each ChoreDoer's assigned chores
-        for (auto& doer : ChoreDoers) {
-          auto doerResults = doer.assignedChores.searchItem<int>(id, matchById);
-          if (!doerResults.empty()) {
-            resultsById.insert(resultsById.end(), doerResults.begin(), doerResults.end());
-          }
-        }
-      }
-      if (resultsById.empty()) {
-        std::cout << "No chore found with the specified ID." << std::endl;
-      }
-      else {
-        Chores.displaySearchResults(resultsById);
-      }
-    }
-
-    void searchByName(const std::string& name) {
-      auto resultsName = Chores.searchItem<std::string>(name, matchByName);
-      if (resultsName.empty()) {
-        // Search through each ChoreDoer's assigned chores
-        for (auto& doer : ChoreDoers) {
-          auto doerResults = doer.assignedChores.searchItem<std::string>(name, matchByName);
-          if (!doerResults.empty()) {
-            resultsName.insert(resultsName.end(), doerResults.begin(), doerResults.end());
-          }
-        }
-      }
-      if (resultsName.empty()) {
-        std::cout << "No chore found with the specified name." << std::endl;
-      }
-      else {
-        Chores.displaySearchResults(resultsName);
-      }
-    }
-
-    void searchByEarnings(int earnings) {
-      auto resultsEarned = Chores.searchItem<int>(earnings, matchByEarnings);
-      if (resultsEarned.empty()) {
-        // Search through each ChoreDoer's assigned chores
-        for (auto& doer : ChoreDoers) {
-          auto doerResults = doer.assignedChores.searchItem<int>(earnings, matchByEarnings);
-          if (!doerResults.empty()) {
-            resultsEarned.insert(resultsEarned.end(), doerResults.begin(), doerResults.end());
-          }
-        }
-      }
-      if (resultsEarned.empty()) {
-        std::cout << "No chore found with the specified earnings." << std::endl;
-      }
-      else {
-        Chores.displaySearchResults(resultsEarned);
-      }
-    }
-
-    std::string searchChoreDoer(const std::string& name) {
-      std::string info;
-      for (auto& doer : ChoreDoers) {
-        if (doer.getName() == name) {
-          info += doer.printChoreDoer() + "\n";
-          if (!doer.assignedChores.empty())
-            info += displayAssignedChores(name);
-        }
-        else {
-          info = "Could not find specified chore doer";
-        }
-      }
-      return info;
-    }
-
-    // These sort functions now simply perform the sorting and print a confirmation message to the console.
-    void sortChoresByEarnings(bool ascending = true) {
-      CompareEarnings comp;
-      Chores.sortItems(comp, ascending);
-      std::cout << "Chores sorted by earnings." << std::endl;
-    }
-
-    void sortChoresByDifficulty(bool ascending = true) {
-      CompareDifficulty comp;
-      Chores.sortItems(comp, ascending);
-      std::cout << "Chores sorted by difficulty." << std::endl;
-    }
-
-    void sortChoresByID(bool ascending = true) {
-      CompareID comp;
-      Chores.sortItems(comp, ascending);
-      std::cout << "Chores sorted by ID." << std::endl;
-    }
-
-    void sortAllChoreDoersChoresByEarnings(bool ascending = true) {
-      for (auto& doer : ChoreDoers) {
-        doer.sortAssignedChoresByEarnings(ascending);
-      }
-      std::cout << "Sorted all chore doers' chores by earnings." << std::endl;
-    }
-
-    void sortAllChoreDoersChoresByDifficulty(bool ascending = true) {
-      for (auto& doer : ChoreDoers) {
-        doer.sortAssignedChoresByDifficulty(ascending);
-      }
-      std::cout << "Sorted all chore doers' chores by difficulty." << std::endl;
-    }
-
-    void sortAllChoreDoersChoresByID(bool ascending = true) {
-      for (auto& doer : ChoreDoers) {
-        doer.sortAssignedChoresByID(ascending);
-      }
-      std::cout << "Sorted all chore doers' chores by ID." << std::endl;
-    }
+  /* NOT IMPLEMENTED
+  // Overloaded ostream operator to facilitate easy output of ChoreDoer's state
+  ostream& operator<<(ostream& os, const ChoreDoer& chDoer) {
+    os << chDoer.printChoreDoer();  // Output formatted chore doer details
+    return os;
+  }
+  */
+  //*********************************************************************************
+  class ChoreManager {
   private:
     json j; // JSON object to store data
     int choreCount; // Counter for the number of chores
     Container<Chore> Chores; // Container to hold chores
-    vector<ChoreDoer> ChoreDoers; // List of chore doers
+    Container<ChoreDoer> ChoreDoers; // List of chore doers
     //Container<Chore> LeftoverChores; // Container for leftover chores
-    Client *client; // Client object, part of the ChoreManager
+    Client* client; // Client object, part of the ChoreManager
     string dynamicFile; // Filename for dynamic operations
 
     // Clear all data from ChoreManager
@@ -1967,13 +1321,13 @@ ostream& operator<<(ostream& os, const ChoreDoer& chDoer) {
         if (!ChoreDoers.empty()) {
           // Clear assigned Container of chores for each chore doer
           for (auto& doer : ChoreDoers) {
-            if (!doer.assignedChores.empty()) {
-              doer.assignedChores.clear();
+            if (!doer->assignedChores.empty()) {
+              doer->assignedChores.clear();
             }
           }
         }
       }
-      catch(const exception& e)
+      catch (const exception& e)
       {
         cerr << "Exception caught in clearAllAssignedChores: " << e.what() << endl;
       }
@@ -1986,123 +1340,1169 @@ ostream& operator<<(ostream& os, const ChoreDoer& chDoer) {
         ChoreDoers.clear();
       }
     }
+  public:
+    // Constructor for ChoreManager that initializes its internal state with file data
+    ChoreManager(string fileName) {
+      try {
+        dynamicFile = fileName; // Save the filename for later use
 
-  };
-}
-//**********************************************************************************************************************************
-// Main function
-int main() {
-    // Path to the JSON file
-    const string dataFilePath(DATA_FILE_PATH + "data.json");
-    json userData;
-
-    // Attempt to load existing user data from the file
-    ifstream userFile(dataFilePath);
-    if (userFile.is_open()) {
-        userFile >> userData;
-        userFile.close();
-    }
-    else {
-        cerr << "Failed to open data file: " << dataFilePath << endl;
-        return EXIT_FAILURE; // Exit if the file can't be opened
-    }
-
-    // Request username to log in or create a new profile
-    cout << "Please enter your username to log in or create a new profile: ";
-    string inputUsername;
-    getline(cin, inputUsername);
-
-    // Initialize a client object and determine whether the user exists
-    ChoreApp::Client client;
-    bool userFound = false;
-
-    // Search for the username in the existing userData
-    for (const auto& user : userData) {
-        if (user["username"].get<string>() == inputUsername) {
-            client = ChoreApp::Client(user); // Initialize client with existing data
-            userFound = true;
-            cout << "Profile found. Loading...\n";
-            break;
-        }
-    }
-
-    // If the username was not found, create a new profile
-    if (!userFound) {
-        cout << "No existing profile found for '" << inputUsername << "'. Setting up a new profile...\n";
-        client.setUsername(inputUsername);
-        client.setNotify();
-        client.setTheme();
-
-        // Add the new user profile to userData and save it
-        userData.push_back(client.toJSON());
-        ofstream outFile(dataFilePath);
-        if (outFile.is_open()) {
-            outFile << userData.dump(4); // Pretty print
-            outFile.close();
+        ifstream file(fileName); // Open the specified file
+        if (file.is_open()) {
+          // Parse the contents of the file into a JSON object if not empty
+          if (j.is_null()) {
+            j = json::parse(file);
+          }
+          file.close(); // Always close the file after opening
         }
         else {
-            cerr << "Failed to save the updated profile data.\n";
+          cerr << "Failed to open file: " << fileName << endl; // Error message if file cannot be opened
         }
+        client = new Client(j);
+        // Initialize client with the user profile from the JSON data
+        if (j.contains("user_profile")) {
+          if (client->getUserName() == "DefaultUser") {
+            cout << "Please enter a User Name\n";
+            string usrName;
+            getline(cin, usrName);
+            client->setUsername(usrName);
+          }
+        }
+        choreCount = 0; // Initialize the chore count
+        loadChores(); // Load chores from the JSON object
+      }
+      catch (const json::exception& e) {
+        cerr << "JSON Error: " << e.what() << endl; // Handle JSON parsing errors
+        throw; // Rethrow the exception for external handling
+      }
+      catch (const ifstream::failure& e) {
+        cerr << "File Error: " << e.what() << endl; // Handle file opening errors
+        throw;
+      }
     }
 
-    // Display the current profile
-    cout << "Current profile:\n" << client.printProfile() << endl;
+    // Destructor to clear resources
+    ~ChoreManager() {
+      clearAll();
+    }
 
-    // Create a ChoreManager object using the existing data
-    ChoreApp::ChoreManager manager(dataFilePath);
+    // Method to load chores from the JSON object into the container
+    void loadChores() {
+      try {
+        if (j.contains("chores") && j["chores"].is_array()) {
+          for (auto& choreJson : j["chores"]) {
+            string difficulty = choreJson.value("difficulty", "unknown"); // Get the difficulty level from the JSON
+            shared_ptr<Chore> chore;
+            addChore(choreJson);
+            /*
+            // Create a specific type of Chore based on the difficulty level
+            if (difficulty == "easy") {
+              chore = make_shared<EasyChore>(choreJson);
+            }
+            else if (difficulty == "medium") {
+              chore = make_shared<MediumChore>(choreJson);
+            }
+            else if (difficulty == "hard") {
+              chore = make_shared<HardChore>(choreJson);
+            }
+            else {
+              cerr << "Unknown difficulty level: " << difficulty << endl;
+              continue;
+            }
 
-    // Display menu and process user choices
-    int choice = 0;
-    do {
-        cout << "\n=== Chore Manager Main Menu ===\n"
-            << "1: Display All Chores\n"
-            << "2: Create a New Chore\n"
-            << "3: Modify Profile or Chores\n"
-            << "4: Delete a Chore\n"
-            << "5: Display Chore Assignments\n"
-            << "6: Assign Chores Randomly\n"
-            << "7: Save Changes\n"
-            << "8: Exit\n"
-            << "Enter your choice: ";
+            // Uses the overloaded push_back method to add the chore to the container
+            Chores.push_back(chore); // Add chore to the container
+            */
+            choreCount++; // Increment the count of chores
+          }
+          saveData();
+        }
+      }
+      catch (const json::parse_error& e) {
+        cerr << "JSON parse error: " << e.what() << endl;
+      }
+      catch (const json::out_of_range& e) {
+        cerr << "JSON out of range error: " << e.what() << endl;
+      }
+      catch (const json::type_error& e) {
+        cerr << "JSON type error: " << e.what() << endl;
+      }
+      catch (const exception& e) {
+        cerr << "Standard exception: " << e.what() << endl;
+      }
+    }
+
+    // Method to modify either user profile data or chore data interactively
+    // NOT IMPLEMENTED YET
+    /*
+    void modifyData() {
+      cout << "1: Modify User Profile\n2: Modify Chores\nChoose option: \n";
+      int choice;
+      cin >> choice;
+      cin.ignore(); // clear buffer after reading number
+
+      switch (choice) {
+      case 1:
+        client->modifyProfile();
+        break;
+      case 2:
+        cout << "Enter chore index to modify: \n";
+        int index;
+        cin >> index;
+        cin.ignore();
+        if (index >= 0 && index < Chores.size()) {
+          Chores[index]->modifyChore();
+        }
+        else {
+          cout << "Invalid index!" << endl;
+        }
+        break;
+      default:
+        cout << "Invalid choice!" << endl;
+      }
+      saveData(); // Save changes to file
+    }
+    */
+    // Method to output all data including chore assignments and user profile to a file
+    void outputChoreAssignmentsToFile(const string& outputPath) {
+      // Check if the output path is empty
+      if (outputPath.empty()) {
+        cerr << "Output path is empty!" << endl;
+        return;
+      }
+
+      // Check if there are any chore doers to process
+      if (ChoreDoers.empty()) {
+        cerr << "No Chore Doers available to output!" << endl;
+        return;
+      }
+
+      // Check if there are any assigned chores to process
+      bool hasAssignedChores = false;
+      for (const auto& doer : ChoreDoers) {
+        if (!doer->assignedChores.empty()) {
+          hasAssignedChores = true;
+          break;
+        }
+      }
+
+      if (!hasAssignedChores) {
+        cerr << "No chores assigned to any Chore Doer!" << endl;
+        return;
+      }
+
+      json output;
+
+      // Include client's user profile data
+      output["user_profile"] = client->toJSON();
+
+      // Include chore assignments for each chore doer
+      output["chore_doers"] = json::array();
+      for (const auto& doer : ChoreDoers) {
+        // Prepare the JSON object for each chore doer with their name and chore count at the top
+        json doerJson = json::object({
+          {"chore_count", doer->getChoreAmount() },
+          {"name", doer->getName()},
+           // Include the count of assigned chores
+          {"chores", json::array()}  // Initialize chores array
+          });
+
+        for (const auto& chore : doer->assignedChores) {
+          doerJson["chores"].push_back(chore->toJSON());
+        }
+        output["chore_doers"].push_back(doerJson);
+      }
+
+      // Write to file with pretty formatting
+      ofstream outFile(outputPath);
+      if (!outFile.is_open()) {
+        throw runtime_error("Could not open file to write chore assignments.\n");
+      }
+      outFile << setw(4) << output; // Pretty print with indent of 4 spaces
+      outFile.close();
+    }
+
+    // Output all data to the console or to file
+    json toJSON() const {
+      json output;
+      for (const auto& chore : Chores) {
+        output["chores"].push_back(chore->toJSON());
+      }
+      if (client) {
+        output["user_profile"] = client->toJSON();
+      }
+      return output;
+    }
+
+    // saveData method to overwrite the original data.json file for chores and user data
+    void saveData() {
+      // Reset our json object because json is getting overwritten
+      j.clear();
+
+      // All data changed through class functions modify or set(attribute) or add/create chore  will be saved here
+      // Add new data to json object with updated chore list
+      j = toJSON();
+
+      // Overwrites original file
+      ofstream file(dynamicFile);
+      if (file) {
+        file << setw(4) << j << endl;
+      }
+      else {
+        cerr << "Error saving file " << dynamicFile << "\n";
+      }
+      file.close();
+    }
+
+    string displayChoreDoerList() {
+      if (ChoreDoers.empty()) {
+        return "No chore doers available.\n";
+      }
+
+      string info;
+      for (const auto& doer : ChoreDoers) {
+        info += doer->getName() + "\n";
+      }
+      return info;
+    }
+
+    string displayChoreList() {
+      if (Chores.empty()) {
+        return "No chores available.\n";
+      }
+
+      string info;
+      for (const auto& chore : Chores) {
+        info += chore->simplePrint() + "\n"; // Only returns few attributes instead of all attributes
+      }
+      return info;
+    }
+
+
+    // Returns assigned chores for a chosen chore doer
+    std::string displayAssignedChores(const std::string& doerName) {
+      auto doer = std::find_if(ChoreDoers.begin(), ChoreDoers.end(), [&doerName](shared_ptr<ChoreDoer>& d) {
+        return d->getName() == doerName;
+        });
+
+      if (doer != ChoreDoers.end()) {
+        std::string info = "Chore Doer: " + (*doer)->getName() + " has chores:\n";
+        info += (*doer)->returnAssignedChores();  // Use Container's method
+        return info;
+      }
+
+      return "Chore Doer not found.\n";
+    }
+
+    string displayAllChoresAllAttributes()
+    {
+      if (Chores.empty())
+      {
+        return "No chores available.\n";
+      }
+      return Chores.displayAllItemsAllAttributes();
+    }
+
+    // Returns assigned chores for all chore doers
+    string displayAllChoreAssignments() {
+      if (ChoreDoers.empty()) {
+        return "No chore doers available.\n";
+      }
+
+      std::string info;
+      bool anyChoresAssigned = false;  // To check if any chores have been assigned at all.
+
+      for (auto& doer : ChoreDoers) {
+        auto choresInfo = doer->returnAssignedChores();
+        if (!choresInfo.empty()) {
+          anyChoresAssigned = true;
+          info += "Chore Doer: " + doer->getName() + " has chores:\n";
+          info += choresInfo;
+          info += "\n";  // Add a newline for separation between doers
+        }
+        else {
+          info += "Chore Doer: " + doer->getName() + " has no assigned chores.\n\n";
+        }
+      }
+
+      if (!anyChoresAssigned) {
+        return "No chores have been assigned to any chore doer.\n";
+      }
+
+      return info;  // Return the complete string with all assigned chores details
+    }
+
+    // Method to delete a chore from the available chore list by ID
+    void deleteChoreFromAvailable(int choreId) {
+      if (Chores.empty()) {
+        cout << "No chores available to delete." << endl;
+        return;
+      }
+
+      if (choreId < 0) {
+        cout << "Invalid chore ID provided. ID must be non-negative." << endl;
+        return;
+      }
+
+      size_t sizeBefore = Chores.size(); // Store the size before deletion
+
+      // Delegate the deletion to the Container class method
+      Chores.deleteItem(choreId);
+      choreCount--;
+      if (Chores.size() < sizeBefore) {
+        cout << "Chore with ID " << choreId << " has been successfully deleted." << endl;
+      }
+      else {
+        cout << "No chore with ID " << choreId << " found in the available chores." << endl;
+      }
+    }
+
+    /*
+    // Method to delete a chore from leftover chores by ID
+    void deleteLeftoverChore(int choreId) {
+      LeftoverChores.deleteItem(choreId);
+    }
+    */
+
+    // NOT IMPLEMENTED IN FINAL VERSION
+
+    // Method to delete a chore from any chore doer's assigned list by ID
+    /*
+    void deleteChoreFromAnyDoer(int choreId) {
+      if (ChoreDoers.empty())
+      {
+        cout << "No chore doers available to delete chores from." << endl;
+        return;
+      }
+      for (auto& doer : ChoreDoers) {
+        doer->assignedChores.deleteItem(choreId);
+      }
+    }
+    */
+
+    // Method to add a new chore doer to the system
+    void addChoreDoer(const string& name) {
+      ChoreDoers.push_back(make_shared<ChoreDoer>(name));
+    }
+
+    // Method to delete a chore doer from the system by name
+    void deleteChoreDoer(const string& name) {
+      try {
+        int index = 0;  // Start index from 0
+        bool found = false;  // Flag to check if chore doer is found
+
+        for (const auto& doer : ChoreDoers) {  // Use range-based for loop to access elements
+          if (doer->getName() == name) {
+            ChoreDoers.deleteItem(index);  // Remove the chore doer at the found index
+            cout << "Chore doer named " << name << " has been deleted.\n";
+            found = true;
+            break;  // Exit loop after removing the chore doer
+          }
+          index++;  // Increment index for each iteration
+        }
+
+        if (!found) {  // Check if the chore doer was found and removed
+          cerr << "ChoreDoer named '" << name << "' not found.\n" << endl;
+        }
+      }
+      catch (const exception& e) {
+        cerr << "Exception thrown in removeChoreDoer: \n" << e.what() << endl;
+      }
+    }
+
+    // Method to add a new chore to the system from a JSON object
+    void addChore(const json& choreJson) {
+      shared_ptr<Chore> chore;
+
+      if (choreJson.is_null()) {
+        cerr << "Invalid chore JSON." << endl;
+        return;
+      }
+      if (choreJson.contains("difficulty") && choreJson["difficulty"].is_string()) {
+        string difficulty = choreJson["difficulty"].get<string>();
+
+        if (difficulty == "easy") {
+          chore = make_shared<EasyChore>(choreJson);
+        }
+        else if (difficulty == "medium") {
+          chore = make_shared<MediumChore>(choreJson);
+        }
+        else if (difficulty == "hard") {
+          chore = make_shared<HardChore>(choreJson);
+        }
+      }
+      Chores.push_back(chore);
+    }
+
+    // NOT IMPLEMENTED IN FINAL VERSION
+    /*
+    // Method to move a chore to leftover chores list by ID
+    void moveChoreToLeftover(int choreId) {
+      for (auto& doer : ChoreDoers) {
+        doer.assignedChores.moveItemToAnotherContainer(choreId, LeftoverChores);
+      }
+    }
+
+    // Method to move a chore from leftover chores to a specific chore doer
+    void moveChoreFromLeftoverToDoer(const string& toDoer, int choreId) {
+      for (auto& doer : ChoreDoers) {
+        if (doer.getName() == toDoer) {
+          LeftoverChores.moveItemToAnotherContainer(choreId, doer.assignedChores);
+          break;
+        }
+        cout << "Chore Doer not found." << endl;
+      }
+    }
+    */
+
+    // Method to move a chore between two chore doers
+    // NOT IMPLEMENTED IN FINAL VERSION
+    /*
+    void moveChoreBetweenDoers(const string& fromDoer, const string& toDoer, int choreId) {
+      bool found = false;
+      for (auto& doer : ChoreDoers) {
+        if (doer->getName() == fromDoer) {
+          for (auto& targetDoer : ChoreDoers) {
+            if (targetDoer->getName() == toDoer) {
+              doer->assignedChores.moveItemToAnotherContainer(choreId, targetDoer->assignedChores);
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!found) {
+        cout << "Chore or Chore Doer not found.\n" << endl;
+      }
+    }
+    */
+
+    //NOT IMPLEMENTED IN FINAL VERSION
+    /*
+    // Method to manually assign a chore to a ChoreDoer
+    void assignChoreDoer(int choreId, string& doerName) {
+      auto chore = std::find_if(Chores.begin(), Chores.end(), [choreId](const shared_ptr<Chore>& c) {
+        return c->getId() == choreId;
+        });
+      if (chore != Chores.end()) {
+        auto doer = std::find_if(ChoreDoers.begin(), ChoreDoers.end(), [&doerName](const shared_ptr<ChoreDoer>& d) {
+          return d->getName() == doerName;
+          });
+
+        if (doer != ChoreDoers.end()) {
+          doer->assignChore(*chore);
+        }
+        else {
+          std::cerr << "ChoreDoer " << doerName << " not found." << std::endl;
+        }
+      }
+      else {
+        std::cerr << "Chore ID " << choreId << " not found." << std::endl;
+      }
+    }
+    */
+    
+    // Method to assign chores randomly to chore doers
+    void assignChoresRandomly() {
+      try {
+        // Check if there are chores to assign
+        if (Chores.empty()) {
+          std::cout << "No chores to assign.\n" << std::endl;
+          return;
+        }
+
+        // Check if there are chore doers available
+        if (ChoreDoers.empty()) {
+          std::cout << "No chore doers available.\n" << std::endl;
+          return;
+        }
+
+        // Create a random engine; you could also use default_random_engine
+        std::random_device rd;
+        std::mt19937 g(rd());
+
+        // Shuffle the chores using the random engine
+        shuffle(Chores.begin(), Chores.end(), g);
+
+        size_t choreIndex = 0;
+        // Loop over each chore and try to assign it to a chore doer
+        while (choreIndex < Chores.size()) {
+          for (auto& doer : ChoreDoers) {
+            if (choreIndex < Chores.size()) {
+              doer->assignChore(Chores[choreIndex++]);
+            }
+            else {
+              break; // Break if there are no more chores to assign
+            }
+          }
+        }
+      }
+      catch (const std::exception& e) {
+        std::cout << "Exception thrown in assignChoresRandomly: " << e.what() << std::endl;
+      }
+    }
+
+    // Method to create a minimal chore structure with initialized attributes
+    // NOT IMPLEMENTED IN FINAL VERSION
+    /* 
+    void createMinimalChore() {
+      std::string name, difficulty, priority, multitasking_tips, input;
+      json choreJson;
+
+      // Automatically set chore ID
+      static int choreId = 1;  // Static counter to automatically increment chore IDs
+      choreJson["id"] = choreId++;
+
+      std::cout << "Enter chore name: ";
+      std::getline(std::cin, name);
+      choreJson["name"] = name;
+
+      // Automatically set other attributes
+      choreJson["description"] = "Standard description";
+      choreJson["status"] = "not started";
+      choreJson["frequency"] = "weekly";
+      choreJson["estimated_time"] = "1 hour";
+      choreJson["earnings"] = 10;  // Default earning
+      choreJson["days"] = std::vector<std::string>{ "Monday", "Wednesday" };
+      choreJson["location"] = "Home";
+      choreJson["tools_required"] = std::vector<std::string>{};
+      choreJson["materials_needed"] = std::vector<std::string>{};
+      choreJson["notes"] = "No additional notes";
+      choreJson["tags"] = std::vector<std::string>{ "general" };
+
+      // Set Difficulty
+      std::cout << "Enter difficulty (easy, medium, hard): ";
+      std::getline(std::cin, difficulty);
+      while (difficulty != "easy" && difficulty != "medium" && difficulty != "hard") {
+        std::cout << "Invalid difficulty. Please enter 'easy', 'medium', or 'hard': \n";
+        std::getline(std::cin, difficulty);
+      }
+      choreJson["difficulty"] = difficulty;
+
+      // Set Priority
+      std::cout << "Enter priority (low, moderate, high): \n";
+      std::getline(std::cin, priority);
+      while (priority != "low" && priority != "moderate" && priority != "high") {
+        std::cout << "Invalid priority. Please enter 'low', 'moderate', or 'high': \n";
+        std::getline(std::cin, priority);
+      }
+      choreJson["priority"] = priority;
+
+      // Conditional inputs based on difficulty
+      if (difficulty == "easy") {
+        std::cout << "Enter multitasking tips for easy chores: \n";
+        std::getline(std::cin, multitasking_tips);
+        choreJson["multitasking_tips"] = multitasking_tips;
+      }
+      else if (difficulty == "medium") {
+        std::cout << "Enter variations for medium chores (comma separated): \n";
+        std::getline(std::cin, input);
+        choreJson["variations"] = input;  // Assuming simple string, adjust if JSON array needed
+      }
+      else if (difficulty == "hard") {
+        std::vector<json> subtasks;
+        char choice = 'y';
+        while (choice == 'y') {
+          json subtask;
+          std::string subtaskName, subtaskTime;
+          int subtaskEarnings;
+
+          std::cout << "Enter a name for one subtask: \n";
+          std::getline(std::cin, subtaskName);
+          subtask["name"] = subtaskName;
+
+          std::cout << "Enter estimated time for the subtask: \n";
+          std::getline(std::cin, subtaskTime);
+          subtask["estimated_time"] = subtaskTime;
+
+          std::cout << "Enter earnings for the subtask (integer value): \n";
+          std::cin >> subtaskEarnings;
+          subtask["earnings"] = subtaskEarnings;
+
+          std::cin.ignore();  // Clear newline character after single char input
+          subtasks.push_back(subtask);
+
+          std::cout << "Add another subtask? (y/n): \n";
+          std::cin >> choice;
+          std::cin.ignore();  // Clear newline character after single char input
+        }
+        choreJson["subtasks"] = subtasks;
+      }
+
+      // Add the chore to the chore list
+      addChore(choreJson);
+    }
+    */
+    // Method to create a full-fledged chore with all details
+    // NOT IMPLEMENTED IN FINAL VERSION
+    /*
+    void createFullChore() {
+      // Basic chore details
+      string name, description, frequency, estimated_time, difficulty, days, location,
+        tools_required, materials_needed, priority, notes, status, tags, multitasking_tips,
+        earningsInput, input;
+      double earnings;
+
+      // Variables for handling unique attributes (Easy, Medium, Hard)
+      json choreJson;
+      char choice;
+      //Id
+      choreJson["id"] = choreCount++;
+
+      //Name
+      cout << "Enter chore name: \n";
+      getline(cin, name);
+      choreJson["name"] = name.empty() ? "" : name;
+
+      //Description
+      cout << "Enter chore description: \n";
+      getline(cin, description);
+      choreJson["description"] = description.empty() ? "" : description;
+
+      //Frequency
+      cout << "Enter chore frequency (e.g., daily, weekly): \n";
+      getline(cin, frequency);
+      choreJson["frequency"] = frequency.empty() ? "" : frequency;
+
+      //Estimated_time
+      cout << "Enter estimated time for chore completion: \n";
+      getline(cin, estimated_time);
+      choreJson["estimated_time"] = estimated_time.empty() ? "" : estimated_time;
+
+      // Handle earnings input with robust validation
+      // If not entered correctly -> re-enter
+      while (true) {
+        cout << "Enter earnings for chore (integer value): \n";
+        getline(cin, earningsInput);
+        try {
+          earnings = stoi(earningsInput);
+          choreJson["earnings"] = earnings;
+          break;  // Break out of the loop if stoi succeeds
+        }
+        catch (const exception& e) {  // Catching all exceptions
+          cout << "Invalid input for earnings. Please enter a valid integer.\n" << e.what() << endl;
+        }
+      }
+
+      //Days
+      cout << "Enter days when the chore should be performed (comma separated): \n";
+      getline(cin, days);
+      choreJson["days"] = days.empty() ? json::array() : json::parse("[" + days + "]");
+
+      //Location
+      cout << "Enter chore location: \n";
+      getline(cin, location);
+      choreJson["location"] = location.empty() ? json::array() : json::parse("[" + location + "]");
+
+      //Tools_required
+      cout << "Enter tools required (comma separated): \n";
+      getline(cin, tools_required);
+      choreJson["tools_required"] = tools_required.empty() ? json::array() : json::parse("[" + tools_required + "]");
+
+      //Materials_needed
+      cout << "Enter materials needed (comma separated): \n";
+      getline(cin, materials_needed);
+      choreJson["materials_needed"] = materials_needed.empty() ? json::array() : json::parse("[" + materials_needed + "]");
+
+      //Notes
+      cout << "Enter any additional notes: \n";
+      getline(cin, notes);
+      choreJson["notes"] = notes.empty() ? "" : notes;
+
+      //Tags
+      cout << "Enter tags for the chore (comma separated): \n";
+      getline(cin, tags);
+      choreJson["tags"] = tags.empty() ? json::array() : json::parse("[" + tags + "]");
+
+      //Difficulty
+      //If not entered correctly -> re-enter
+      cout << "Enter difficulty (easy, medium, hard): ";
+      getline(cin, difficulty);
+      while (difficulty != "easy" && difficulty != "medium" && difficulty != "hard" && !difficulty.empty()) {
+        cout << "Invalid difficulty. Please enter 'easy', 'medium', or 'hard': \n";
+        getline(cin, difficulty);
+      }
+      choreJson["difficulty"] = difficulty.empty() ? "" : difficulty;
+
+      //Priority
+      //If not entered correctly -> re-enter
+      cout << "Enter priority (low, moderate, high): ";
+      getline(cin, priority);
+      while (priority != "low" && priority != "moderate" && priority != "high" && !priority.empty()) {
+        cout << "Invalid priority. Please enter 'low', 'moderate', or 'high': \n";
+        getline(cin, priority);
+      }
+      choreJson["priority"] = priority.empty() ? "" : priority;
+
+      //Status
+      //If not entered correctly -> re-enter
+      cout << "Enter status (not started, in progress, completed): \n";
+      getline(cin, status);
+      while (status != "not started" && status != "in progress" && status != "completed" && !status.empty()) {
+        cout << "Invalid status. Please enter 'not started', 'in progress', or 'completed': \n";
+        getline(cin, status);
+      }
+      choreJson["status"] = status.empty() ? "" : status;
+
+      // Unique attributes based on difficulty
+      // EASY
+      if (difficulty == "easy") {
+        cout << "Enter multitasking tips for easy chore: \n";
+        getline(cin, multitasking_tips);
+        choreJson["multitasking_tips"] = multitasking_tips.empty() ? "" : multitasking_tips;
+      }
+      // MEDIUM
+      else if (difficulty == "medium") {
+
+        cout << "Are there any variations? Enter 'y' for yes or 'n' for no: \n";
         cin >> choice;
-        cin.ignore(numeric_limits<streamsize>::max(), '\n'); // Clear the buffer
+
+        if (choice == 'y')
+        {
+          cout << "Enter variations for medium chore (comma separated): \n";
+          cin.ignore();
+          getline(cin, input);
+          choreJson["variations"] = input.empty() ? json::array() : json::parse("[" + input + "]");
+        }
+      }
+      // HARD
+      else if (difficulty == "hard") {
+        json subtask;
+        string subtaskName;
+        string subtaskTime;
+        int subtaskEarnings;
+
+        cout << "Are there any subtasks? Enter 'y' for yes or 'n' for no: \n";
+        cin >> choice;
+
+        if (choice == 'y')
+        {
+          cout << "Enter a name for one subtask: \n";
+          getline(cin, subtaskName);
+
+          cout << "Enter estimated time for the subtask: \n";
+          getline(cin, subtaskTime);
+
+          // Handle earnings input with robust validation
+          while (true) {
+            cout << "Enter earnings for chore (integer value) or whole dollar amount: \n";
+
+            try {
+              cin >> subtaskEarnings;
+              choreJson["earnings"] = subtaskEarnings; // If not int -> catch exception -> repeat loop
+              break;  // Break out of the loop if stoi succeeds
+            }
+            catch (const exception& e) {  // Catching all exceptions
+              cout << "Invalid input for earnings. Please enter a valid integer.\n" << e.what() << endl;
+            }
+          }
+
+          // Save the rest of subtask
+          subtask["name"] = subtaskName.empty() ? "" : subtaskName;
+          subtask["estimated_time"] = subtaskTime.empty() ? "" : subtaskTime;
+          subtask["earnings"] = to_string(subtaskEarnings).empty() ? 0 : subtaskEarnings;
+          choreJson["subtasks"] = json::array({ subtask });
+        }
+        // If n is entered, create empty subtask
+        else
+        {
+          cout << "No subtasks added.\n" << endl;
+          choreJson["subtasks"] = json::array(); // should be empty
+        }
+      }
+
+      // Add the chore to the chore list and save file
+      addChore(choreJson);
+      cout << "Chore added successfully!\n" << endl;
+    }
+    */
+
+    //Function wrapper for templated sort function
+    template<typename Comparator>
+    void sortChores(Comparator comp, bool ascending = true) {
+      try
+      {
+        Chores.sortItems(comp, ascending);
+      }
+      catch (const exception& e)
+      {
+        cerr << "Exception caught in sortChores: \n" << e.what() << endl;
+      }
+    }
+
+    void searchByID(int id) {
+      auto resultsById = Chores.searchItem<int>(id, matchById);
+      if (resultsById.empty()) {
+        // Search through each ChoreDoer's assigned chores
+        for (auto& doer : ChoreDoers) {
+          auto doerResults = doer->assignedChores.searchItem<int>(id, matchById);
+          if (!doerResults.empty()) {
+            resultsById.insert(resultsById.end(), doerResults.begin(), doerResults.end());
+          }
+        }
+      }
+      if (resultsById.empty()) {
+        std::cout << "No chore found with the specified ID.\n" << std::endl;
+      }
+      else {
+        Chores.displaySearchResults(resultsById);
+      }
+    }
+
+    void searchByName(const std::string& name) {
+      auto resultsName = Chores.searchItem<std::string>(name, matchByName);
+      if (resultsName.empty()) {
+        // Search through each ChoreDoer's assigned chores
+        for (auto& doer : ChoreDoers) {
+          auto doerResults = doer->assignedChores.searchItem<std::string>(name, matchByName);
+          if (!doerResults.empty()) {
+            resultsName.insert(resultsName.end(), doerResults.begin(), doerResults.end());
+          }
+        }
+      }
+      if (resultsName.empty()) {
+        std::cout << "No chore found with the specified name.\n" << std::endl;
+      }
+      else {
+        Chores.displaySearchResults(resultsName);
+      }
+    }
+
+    void searchByEarnings(int earnings) {
+      auto resultsEarned = Chores.searchItem<int>(earnings, matchByEarnings);
+      if (resultsEarned.empty()) {
+        // Search through each ChoreDoer's assigned chores
+        for (auto& doer : ChoreDoers) {
+          auto doerResults = doer->assignedChores.searchItem<int>(earnings, matchByEarnings);
+          if (!doerResults.empty()) {
+            resultsEarned.insert(resultsEarned.end(), doerResults.begin(), doerResults.end());
+          }
+        }
+      }
+      if (resultsEarned.empty()) {
+        std::cout << "No chore found with the specified earnings.\n" << std::endl;
+      }
+      else {
+        Chores.displaySearchResults(resultsEarned);
+      }
+    }
+
+    /*
+    std::string searchChoreDoer(const std::string& name) {
+      std::string info;
+      if (ChoreDoers.empty())
+      {
+        std::cout << "No chore doers available.\n" << std::endl;
+        return "There are no chore doers.\nAdd a chore doer in the main menu.\n";
+      }
+      for (auto doer : ChoreDoers) {
+        if (doer->getName() == name) {
+          info += doer->printChoreDoer() + "\n";
+          if (!doer->assignedChores.empty())
+            info += displayAssignedChores(name);
+        }
+        else {
+          info = "Could not find specified chore doer\n";
+        }
+      }
+      return info;
+    }
+    */
+
+    // Sorts chores by earnings and prints a confirmation message.
+    void sortChoresByEarnings(bool ascending = true) {
+      CompareEarnings comp;  // Instantiate the comparator for earnings
+      if (!Chores.empty()) {  // Check if there are chores to sort
+        Chores.sortItems(comp, ascending);  // Perform the sort operation
+        std::cout << "Chores sorted by earnings.\n";  // Print confirmation
+      }
+    }
+
+    // Sorts chores by difficulty and prints a confirmation message.
+    void sortChoresByDifficulty(bool ascending = true) {
+      CompareDifficulty comp;  // Instantiate the comparator for difficulty
+      if (!Chores.empty()) {  // Check if there are chores to sort
+        Chores.sortItems(comp, ascending);  // Perform the sort operation
+        std::cout << "Chores sorted by difficulty.\n";  // Print confirmation
+      }
+    }
+
+    // Sorts chores by their unique IDs and prints a confirmation message.
+    void sortChoresByID(bool ascending = true) {
+      CompareID comp;  // Instantiate the comparator for ID
+      if (!Chores.empty()) {  // Check if there are chores to sort
+        Chores.sortItems(comp, ascending);  // Perform the sort operation
+        std::cout << "Chores sorted by ID.\n";  // Print confirmation
+      }
+    }
+
+    // Sorts chores by names and prints a confirmation message.
+    void sortChoresByName(bool ascending = true) {
+      CompareName comp;  // Instantiate the comparator for name
+      if (!Chores.empty()) {  // Check if there are chores to sort
+        Chores.sortItems(comp, ascending);  // Perform the sort operation
+        std::cout << "Chores sorted by name.\n";  // Print confirmation
+      }
+    }
+    // NOT IMPLEMENTED
+    /*
+    // Sorts all assigned chores for each chore doer by earnings and prints a confirmation message.
+    void sortAllChoreDoersChoresByEarnings(bool ascending = true) {
+      if (ChoreDoers.empty()) {  // Check if there are chore doers
+        std::cout << "No chore doers available.\n";  // Notify if no chore doers are available
+        return;
+      }
+      for (auto& doer : ChoreDoers) {  // Loop through each chore doer
+        doer->sortAssignedChoresByEarnings(ascending);  // Sort their assigned chores by earnings
+      }
+      std::cout << "Sorted all chore doers' chores by earnings.\n";  // Print confirmation
+    }
+
+    // Sorts all assigned chores for each chore doer by difficulty and prints a confirmation message.
+    void sortAllChoreDoersChoresByDifficulty(bool ascending = true) {
+      if (ChoreDoers.empty()) {  // Check if there are chore doers
+        std::cout << "No chore doers available.\n";  // Notify if no chore doers are available
+        return;
+      }
+      for (auto& doer : ChoreDoers) {  // Loop through each chore doer
+        doer->sortAssignedChoresByDifficulty(ascending);  // Sort their assigned chores by difficulty
+      }
+      std::cout << "Sorted all chore doers' chores by difficulty.\n";  // Print confirmation
+    }
+
+    // Sorts all assigned chores for each chore doer by ID and prints a confirmation message.
+    void sortAllChoreDoersChoresByID(bool ascending = true) {
+      if (ChoreDoers.empty()) {  // Check if there are chore doers
+        std::cout << "No chore doers available.\n";  // Notify if no chore doers are available
+        return;
+      }
+      for (auto& doer : ChoreDoers) {  // Loop through each chore doer
+        doer->sortAssignedChoresByID(ascending);  // Sort their assigned chores by ID
+      }
+      std::cout << "Sorted all chore doers' chores by ID.\n";  // Print confirmation
+    }
+    */
+    // Compares two chores based on their IDs to check if they are identical.
+    void compareChores(int id1, int id2) {
+      if (id1 < 0 || id2 < 0) {  // Validate the IDs to ensure they are non-negative
+        cout << "Invalid chore ID provided. ID must be non-negative.\n";
+        return;
+      }
+      auto chore1 = find_if(Chores.begin(), Chores.end(), [id1](const shared_ptr<Chore>& chore) {
+        return chore->getId() == id1;  // Find the first chore by ID
+        });
+      auto chore2 = find_if(Chores.begin(), Chores.end(), [id2](const shared_ptr<Chore>& chore) {
+        return chore->getId() == id2;  // Find the second chore by ID
+        });
+
+      if (chore1 != Chores.end() && chore2 != Chores.end()) {  // Ensure both chores are found
+        if (**chore1 == **chore2) {
+          cout << "The two chores are identical.\n";
+        }
+        else {
+          cout << "The two chores are not identical.\n";
+        }
+      }
+      else {
+        cout << "One or both chore IDs not found.\n";
+      }
+    }
+
+    // Provides a menu for searching chores by ID, name, or earnings.
+    void searchMenu() {
+      int choice, id, earnings;
+      string name;
+      bool searchMenuRunning = true;
+      while (searchMenuRunning) {
+        cout << "\nSearch Chores Menu\n";
+        cout << "1. Search by ID\n";
+        cout << "2. Search by Name\n";
+        cout << "3. Search by Earnings\n";
+        cout << "4. Back to Main Menu\n";
+        cout << "Enter your choice: ";
+        cin >> choice;
+        cin.ignore();  // Clear the newline character after the integer input
 
         switch (choice) {
         case 1:
-            manager.displayChoreList();
-            break;
+          cout << "Enter the ID of the chore to search for: ";
+          cin >> id;
+          cin.ignore();
+          searchByID(id);
+          break;
         case 2:
-            manager.createFullChore();
-            break;
+          cout << "Enter the name of the chore to search for: ";
+          getline(cin, name);
+          searchByName(name);
+          break;
         case 3:
-            manager.modifyData(); // Modify either profile or chores
-            break;
-        case 4: {
-            int choreId;
-            cout << "Enter Chore ID to delete: ";
-            cin >> choreId;
-            cin.ignore(numeric_limits<streamsize>::max(), '\n');
-            manager.deleteChoreFromAvailable(choreId);
-            break;
-        }
-        case 5:
-            manager.displayAssignedChores();
-            break;
-        case 6:
-            manager.assignChoresRandomly();
-            break;
-        case 7:
-            manager.saveData();
-            cout << "Changes saved.\n";
-            break;
-        case 8:
-            cout << "Exiting program...\n";
-            break;
+          cout << "Enter the earnings of the chores to search for: ";
+          cin >> earnings;
+          cin.ignore();
+          searchByEarnings(earnings);
+          break;
+        case 4:
+          searchMenuRunning = false;
+          break;
         default:
-            cout << "Invalid option. Please try again.\n";
-            break;
+          cout << "Invalid choice. Please try again.\n";
+          break;
         }
-    } while (choice != 8);
+      }
+    }
 
-    return 0;
+    // Provides a menu for sorting chores by ID, name, earnings, or difficulty.
+    void sortMenu() {
+      int choice;
+      bool sortMenuRunning = true;
+
+      while (sortMenuRunning) {
+        cout << "\nSort Chores Menu\n";
+        cout << "1. Sort by ID\n";
+        cout << "2. Sort by Name\n";
+        cout << "3. Sort by Earnings\n";
+        cout << "4. Sort by Difficulty\n";
+        cout << "5. Back to Main Menu\n";
+        cout << "Enter your choice: ";
+        cin >> choice;
+        cin.ignore();  // Clear the newline character after the integer input
+
+        switch (choice) {
+        case 1:
+          cout << "Sorting chores by ID.\n";
+          sortChoresByID();
+          break;
+        case 2:
+          cout << "Sorting chores by Name.\n";
+          sortChoresByName();
+          break;
+        case 3:
+          cout << "Sorting chores by Earnings.\n";
+          sortChoresByEarnings();
+          break;
+        case 4:
+          cout << "Sorting chores by Difficulty.\n";
+          sortChoresByDifficulty();
+          break;
+        case 5:
+          sortMenuRunning = false;
+          break;
+        default:
+          cout << "Invalid choice. Please try again.\n";
+          break;
+        }
+      }
+    }
+  };
+}
+int main() {
+  try {
+    // Define the file path for the main data file
+    string testFile = DATA_FILE_PATH + "data.json";
+
+    // Define the file path for the file where assigned chores are written
+    string assignedChoresFile = DATA_FILE_PATH + "assigned_chores.json";
+
+    // Instantiate a ChoreManager object using the data file path
+    ChoreApp::ChoreManager manager(testFile);
+
+    // Flag to control the main loop
+    bool running = true;
+    string input; // Variable to store user input
+    int choice;   // Variable to store user's menu choice
+    int id;       // Variable to store chore or chore doer ID
+
+    // Main loop to display the menu and process user input
+    while (running) {
+      // Display the main menu options
+      cout << "\nChore Manager System\n";
+      cout << "1. Add Chore Doer\n";
+      cout << "2. Assign Chores Randomly\n";
+      cout << "3. Show All Chores\n";
+      cout << "4. Display All Assigned Chores\n";
+      cout << "5. Display All Chores with all data\n";
+      cout << "6. Print All Chore Doers Assigned Chores to File\n";
+      cout << "7. Delete a Chore by ID\n";
+      cout << "8. Delete a Chore Doer by Name\n";
+      cout << "9. Display All Chore Doers\n";
+      cout << "10. Search Chores\n";
+      cout << "11. Compare Two Chores\n";
+      cout << "12. Sort Chores\n";
+      cout << "15. Exit\n";
+      cout << "Enter your choice: \n";
+      cin >> choice;
+      cin.ignore();  // Clear the newline character to prepare for next input
+
+      switch (choice) {
+      case 1:
+        cout << "Enter chore doer's name: \n";
+        getline(cin, input); // Get the chore doer's name from user
+        manager.addChoreDoer(input); // Add the chore doer to the system
+        cout << "Chore doer " << input << " added successfully.\n";
+        break;
+      case 2:
+        manager.assignChoresRandomly(); // Assign chores to chore doers randomly
+        cout << "Chores have been assigned randomly.\n";
+        break;
+      case 3:
+        cout << "Listing all chores:\n";
+        cout << manager.displayChoreList(); // Display a list of all chores
+        break;
+      case 4:
+        cout << "Displaying chores assigned to all chore doers:\n";
+        cout << manager.displayAllChoreAssignments(); // Display all assigned chores
+        break;
+      case 5:
+        cout << "Displaying all chores with all data:\n";
+        cout << manager.displayAllChoresAllAttributes(); // Display detailed info of all chores
+        break;
+      case 6:
+        manager.outputChoreAssignmentsToFile(assignedChoresFile); // Output chore assignments to a file
+        cout << "Chore assignments have been printed to " << assignedChoresFile << "\n";
+        break;
+      case 7:
+        cout << "Enter the ID of the chore to delete: ";
+        cin >> id;
+        cin.ignore();
+        manager.deleteChoreFromAvailable(id); // Delete the specified chore by ID
+        cout << "Chore with ID " << id << " has been deleted.\n";
+        break;
+      case 8:
+        cout << "Enter the name of the chore doer to delete: ";
+        getline(cin, input);
+        manager.deleteChoreDoer(input); // Delete the specified chore doer by name
+        break;
+      case 9:
+        cout << "Displaying all chore doers:\n";
+        cout << manager.displayChoreDoerList(); // Display all chore doers
+        break;
+      case 10:
+        manager.searchMenu(); // Display the search menu
+        break;
+      case 11:
+        int choreId1, choreId2;
+        cout << "Enter the ID of the first chore to compare: ";
+        cin >> choreId1;
+        cout << "Enter the ID of the second chore to compare: ";
+        cin >> choreId2;
+        cin.ignore();
+        manager.compareChores(choreId1, choreId2); // Compare two chores by ID
+        break;
+      case 12:
+        manager.sortMenu(); // Display the sorting menu
+        break;
+      case 13:
+        running = false; // Set the flag to false to exit the loop
+        cout << "Exiting Chore Manager System.\n";
+        break;
+      default:
+        cout << "Invalid choice. Please try again.\n"; // Handle invalid menu options
+        break;
+      }
+    }
+  }
+  catch (const exception& e) {
+    // Catch and display any exceptions that occur during execution
+    cout << "Exception caught in main: " << e.what() << endl;
+  }
+  return 0; // Return 0 to indicate successful completion
 }

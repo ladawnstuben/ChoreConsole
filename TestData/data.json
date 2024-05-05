@@ -21,10 +21,11 @@
                 "dirty dishes",
                 "water"
             ],
+            "multitasking_tips": "Listen to a podcast or your favorite music while washing dishes to make the time pass more quickly.",
             "name": "Wash dishes",
             "notes": "Use warm water for better results.",
             "priority": "moderate",
-            "status": "not_started",
+            "status": "not started",
             "tags": [
                 "daily chores",
                 "kitchen cleaning"
@@ -50,10 +51,11 @@
             "materials_needed": [
                 "full trash bins"
             ],
+            "multitasking_tips": "Check other rooms for trash that needs to be taken out while you're emptying the bins.",
             "name": "Take out the trash",
             "notes": "",
             "priority": "moderate",
-            "status": "not_started",
+            "status": "not started",
             "tags": [
                 "trash disposal"
             ],
@@ -76,10 +78,11 @@
                 "surfaces",
                 "furniture"
             ],
+            "multitasking_tips": "Listen to an audiobook or catch up on phone calls while dusting to make the most of your time.",
             "name": "Dusting",
             "notes": "Use a damp cloth for better dust removal.",
             "priority": "low",
-            "status": "not_started",
+            "status": "not started",
             "tags": [
                 "dusting",
                 "household cleaning"
@@ -106,7 +109,7 @@
             "name": "Clean the bathroom",
             "notes": "Use gloves and protective eyewear.",
             "priority": "moderate",
-            "status": "not_started",
+            "status": "not started",
             "tags": [
                 "bathroom cleaning",
                 "weekly chores"
@@ -115,6 +118,9 @@
                 "toilet brush",
                 "scrub brush",
                 "cleaning spray"
+            ],
+            "variations": [
+                "deep cleaning"
             ]
         },
         {
@@ -134,7 +140,7 @@
             "name": "Laundry",
             "notes": "Sort clothes by color and fabric type.",
             "priority": "moderate",
-            "status": "not_started",
+            "status": "not started",
             "tags": [
                 "laundry",
                 "weekly chores"
@@ -143,6 +149,12 @@
                 "washing machine",
                 "dryer",
                 "laundry detergent"
+            ],
+            "variations": [
+                "delicate cycle",
+                "dry cleaning",
+                "all whites",
+                "all colors"
             ]
         },
         {
@@ -162,7 +174,7 @@
             "name": "Grocery shopping",
             "notes": "Check pantry and fridge before shopping.",
             "priority": "moderate",
-            "status": "not_started",
+            "status": "not started",
             "tags": [
                 "grocery shopping",
                 "weekly chores"
@@ -170,6 +182,9 @@
             "tools_required": [
                 "grocery list",
                 "shopping cart"
+            ],
+            "variations": [
+                "online shopping"
             ]
         },
         {
@@ -190,7 +205,7 @@
             "name": "Window cleaning",
             "notes": "Clean on a cloudy day to avoid streaks.",
             "priority": "low",
-            "status": "not_started",
+            "status": "not started",
             "tags": [
                 "window cleaning",
                 "monthly chores"
@@ -199,6 +214,10 @@
                 "window cleaner",
                 "microfiber cloth",
                 "squeegee"
+            ],
+            "variations": [
+                "interior",
+                "exterior"
             ]
         },
         {
@@ -216,7 +235,19 @@
             "name": "Vacuum the floors",
             "notes": "Check vacuum bag before starting.",
             "priority": "high",
-            "status": "not_started",
+            "status": "not started",
+            "subtasks": [
+                {
+                    "earnings": 5,
+                    "estimated_time": "30 minutes",
+                    "name": "Living room"
+                },
+                {
+                    "earnings": 5,
+                    "estimated_time": "30 minutes",
+                    "name": "Bedroom"
+                }
+            ],
             "tags": [
                 "weekly chores",
                 "household cleaning"
@@ -243,7 +274,19 @@
             "name": "Mow the lawn",
             "notes": "Check lawn mower condition before starting.",
             "priority": "high",
-            "status": "not_started",
+            "status": "not started",
+            "subtasks": [
+                {
+                    "earnings": 5,
+                    "estimated_time": "30 minutes",
+                    "name": "Edging"
+                },
+                {
+                    "earnings": 10,
+                    "estimated_time": "30 minutes",
+                    "name": "Trimming"
+                }
+            ],
             "tags": [
                 "outdoor chores",
                 "lawn care"
@@ -273,7 +316,24 @@
             "name": "Meal prep",
             "notes": "Plan meals ahead for efficiency.",
             "priority": "high",
-            "status": "not_started",
+            "status": "not started",
+            "subtasks": [
+                {
+                    "earnings": 5,
+                    "estimated_time": "1 hour",
+                    "name": "Meal planning"
+                },
+                {
+                    "earnings": 15,
+                    "estimated_time": "1.5 hours",
+                    "name": "Cooking"
+                },
+                {
+                    "earnings": 5,
+                    "estimated_time": "30 minutes",
+                    "name": "Packing"
+                }
+            ],
             "tags": [
                 "meal preparation",
                 "cooking"
@@ -285,8 +345,11 @@
         }
     ],
     "user_profile": {
-        "notify": false,
-        "theme": "light",
+        "last_logged_in": "2024-05-05 03:09:14",
+        "preferences": {
+            "notify": true,
+            "theme": "Default"
+        },
         "username": "user1"
     }
 }
