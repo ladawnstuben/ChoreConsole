@@ -1,2508 +1,1810 @@
 
+// wx (and the Windows COM headers it pulls in on MSW) must be parsed BEFORE
+// ChoreModel.h's "using namespace std;" takes effect — otherwise unqualified `byte`
+// inside those Windows headers becomes ambiguous with std::byte (from <cstddef>,
+// transitively included by ChoreModel.h's <filesystem>).
 #pragma warning( push )
-#pragma warning(disable:26819)
-#include "json.hpp"
-#include <iostream>
-#include <string>
-#include <vector>
-#include <memory>
-#include <cstdlib>  // For rand() and srand()
-#include <ctime>    // For time()
-#include <fstream>
-#include <random>
-#include <sstream>
+#pragma warning( disable: 4996 )
+#include <wx/wx.h>
+#include <wx/notebook.h>
+#include <wx/listctrl.h>
+#include <wx/spinctrl.h>
+#include <wx/choice.h>
+#include <wx/combobox.h>
+#include <wx/scrolwin.h>
+#include <wx/artprov.h>
+#include <wx/toolbar.h>
+#include <wx/stdpaths.h>
+#include <wx/filename.h>
+#include <wx/filedlg.h>
+#include <wx/graphics.h>
+#include <wx/clrpicker.h>
+#include <wx/dcbuffer.h>
 #pragma warning( pop )
 
-using json = nlohmann::json;
-using namespace std;
+#include "ChoreModel.h"
 
-//// Define the starting path to the test data file
-const string DATA_FILE_PATH = "TestData\\";
+// TestData paths are resolved relative to the running executable's own directory
+// (rather than the process's current working directory) so the app works the same
+// whether launched via Visual Studio or by double-clicking the .exe. The executable
+// lands at <repo>\x64\<Config>\ChoreConsole.exe, so walk up two directory levels to
+// reach the repo root, then into TestData.
+string GetTestDataDir() {
+  wxFileName exeFile(wxStandardPaths::Get().GetExecutablePath());
+  wxFileName dir = wxFileName::DirName(exeFile.GetPath()); // .../x64/<Config>
+  dir.RemoveLastDir(); // .../x64
+  dir.RemoveLastDir(); // repo root
+  dir.AppendDir("TestData");
+  return dir.GetPath().ToStdString();
+}
+
+string GetTestDataFilePath(const string& fileName) {
+  wxFileName file(GetTestDataDir(), fileName);
+  return file.GetFullPath().ToStdString();
+}
+
+string GetHouseholdsDir() {
+  return GetTestDataDir() + "\\households";
+}
+
+string GetAppStatePath() {
+  return GetTestDataFilePath("app_state.json");
+}
+
+// wxListCtrl has no GetFirstSelected() of its own; this is the standard idiom for it.
+long GetFirstSelectedItem(wxListCtrl* list) {
+  return list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+}
+
+// Splits a comma-separated field (as typed into the chore editor) into trimmed tokens.
+vector<string> SplitCommaList(const string& text) {
+  vector<string> result;
+  stringstream ss(text);
+  string token;
+  while (getline(ss, token, ',')) {
+    size_t start = token.find_first_not_of(" \t");
+    size_t end = token.find_last_not_of(" \t");
+    if (start != string::npos) {
+      result.push_back(token.substr(start, end - start + 1));
+    }
+  }
+  return result;
+}
+
+// Joins a vector back into a comma-separated string for prefilling an editable field.
+string JoinCommaList(const vector<string>& items) {
+  string result;
+  for (const auto& item : items) {
+    if (!result.empty()) result += ", ";
+    result += item;
+  }
+  return result;
+}
+
+// Date-navigation helpers for the History tab. Must produce/consume the exact same
+// zero-padded "YYYY-MM-DD" shape as ChoreModel.h's FormatDateNow(), since day lookups
+// round-trip by plain string equality.
+string TodayDateString() {
+  time_t now = time(nullptr);
+  struct tm timeinfo;
+  localtime_s(&timeinfo, &now);
+  stringstream ss;
+  ss << put_time(&timeinfo, "%Y-%m-%d");
+  return ss.str();
+}
+
+string AddDaysToDateString(const string& yyyyMMdd, int deltaDays) {
+  struct tm timeinfo = {};
+  sscanf_s(yyyyMMdd.c_str(), "%d-%d-%d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday);
+  timeinfo.tm_year -= 1900;
+  timeinfo.tm_mon -= 1;
+  timeinfo.tm_hour = 12; // noon, to sidestep DST edge cases
+  timeinfo.tm_mday += deltaDays;
+  time_t asTime = mktime(&timeinfo);
+  struct tm normalized;
+  localtime_s(&normalized, &asTime);
+  stringstream ss;
+  ss << put_time(&normalized, "%Y-%m-%d");
+  return ss.str();
+}
+
+string FormatDateForDisplay(const string& yyyyMMdd) {
+  struct tm timeinfo = {};
+  sscanf_s(yyyyMMdd.c_str(), "%d-%d-%d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday);
+  timeinfo.tm_year -= 1900;
+  timeinfo.tm_mon -= 1;
+  timeinfo.tm_hour = 12;
+  mktime(&timeinfo); // normalizes tm_wday from the date fields
+  stringstream ss;
+  ss << put_time(&timeinfo, "%A, %B %d, %Y");
+  return ss.str();
+}
 
 namespace ChoreApp
 {
-
-  //ENUMS for handing data that should never change only shifted
-  enum class DIFFICULTY { EASY, MEDIUM, HARD };
-  enum class STATUS { NOT_STARTED, IN_PROGRESS, COMPLETED };
-  enum class PRIORITY { LOW, MODERATE, HIGH };
-
-
-  class Client {
-  private:
-    struct Preferences {
-      bool notify;
-      string theme;  // Using a simple string
-
-      Preferences(const json& j)
-        : notify(j.contains("notify") && !j["notify"].is_null() ? j["notify"].get<bool>() : false),
-        theme(j.contains("theme") && !j["theme"].is_null() ? j["theme"].get<string>() : "Default") {}  // Use an empty string as the default if theme is not present
-    };
-
-    struct UserProfile {
-      string username;
-      string last_logged_in; // Always set to the current date and time
-      Preferences preferences;
-
-      UserProfile(const json& j)
-        : username(j.contains("username") && !j["username"].is_null() ? j["username"].get<string>() : "DefaultUser"), // Prompt the user for their username
-        last_logged_in(getCurrentDateTime()), // Set to current datetime
-        preferences(j.contains("preferences") && !j["preferences"].is_null() ? j["preferences"] : json{}) {}
-      // Directly pass the JSON object
-
-      string getCurrentDateTime() {
-        time_t now = time(nullptr);  // Get the current time as time_t
-        struct tm timeinfo;  // Create a tm struct to hold local time
-
-        // Use localtime_s for safe conversion from time_t to tm.
-        // localtime_s returns zero on success.
-        // localtime is deprecated in C++14 and later, so it's better to use localtime_s.
-        if (localtime_s(&timeinfo, &now) != 0) {
-          throw runtime_error("Failed to convert time to local time.");
-        }
-
-        stringstream ss;
-        ss << put_time(&timeinfo, "%Y-%m-%d %H:%M:%S");  // Format time to a readable string
-        return ss.str();
-      }
-    };
-
-    UserProfile userProfile;
-
-
-  public:
-
-    // Constructor checks if "user_profile" key exists and handles it
-    // The constructor initializes the userProfile struct using the JSON object properly
-    Client(const json& j)
-      : userProfile(j.contains("user_profile") ? j["user_profile"] : json{}) {}
-
-    json toJSON() const {
-      return json{
-          {"username", userProfile.username},
-          {"last_logged_in", userProfile.last_logged_in},
-          {"preferences", {{"notify", userProfile.preferences.notify}, {"theme", userProfile.preferences.theme}}}
-      };
-    }
-
-    // NOT IMPLEMENTED
-    /*
-    void modifyProfile() {
-      cout << "Modifying Profile..." << endl;
-      cout << "Current UserName is: " << getUserName() << "\nWould you like to change it? If yes, enter (y) otherwise enter any other character.";
-      char usrNm_input;
-      cin.get(usrNm_input);
-      if (usrNm_input == 'y')
-      {
-        getline(cin, userProfile.username);
-      }
-
-      cout << "Current theme is: " << getTheme() << "\nWould you like to toggle it? If yes, enter (y) otherwise enter any other character.";
-      char pref_input;
-      cin.get(pref_input);
-
-      if (pref_input == 'y')
-      {
-        toggleNotify();
-      }
-    }
-    */
-
-    // Print out the client's profile information
-    string printProfile() const {
-      string result;
-      result += "Username: " + userProfile.username + "\n";
-      result += "Last Logged In: " + (!userProfile.last_logged_in.empty() ? userProfile.last_logged_in : "Never") + "\n";
-      result += "Notifications: " + string(userProfile.preferences.notify ? "Enabled" : "Disabled") + "\n";
-      result += "Theme: " + (!userProfile.preferences.theme.empty() ? userProfile.preferences.theme : "Default") + "\n";
-      return result;
-    }
-
-    // NOT IMPLEMENTED
-    /*
-    void setUsername() {
-      string result;
-      getline(cin, userProfile.username);
-      if (userProfile.username.empty()) {
-        //cout << "Username cannot be empty. Please try again." << endl;
-        setUsername();  // Recursive call if input is empty
-      }
-    }
-    */
-
-    /*
-    void setNotify()
-    {
-      // needs to work with wxWidgets
-      //cout << "Please enter your notification preference (true/false): ";
-      string notify;
-      getline(cin, notify);
-      if (notify != "true" && notify != "false")
-      {
-        cout << "Invalid input. Please enter 'true' or 'false'." << endl;
-        setNotify();  // Recursive call if input is invalid
-      }
-      userProfile.preferences.notify = notify == "true";
-    }
-    */
-
-    /*
-    void setTheme()
-    {
-      // needs to work with wxWidgets
-      cout << "Please enter your theme (dark/light): ";
-      getline(cin, userProfile.preferences.theme);
-      if (userProfile.preferences.theme != "dark" && userProfile.preferences.theme != "light")
-      {
-        cout << "Invalid theme. Please enter 'dark' or 'light'." << endl;
-        setTheme();  // Recursive call if input is invalid
-      }
-    }
-    */
-
-    
-    string getUserName() const
-    {
-      return userProfile.username;
-    }
-    //NOT IMPLEMENTED
-    /*
-    string getLastLoggedIn() const
-    {
-      return userProfile.last_logged_in;
-    }
-
-    string getNotify() const
-    {
-      return userProfile.preferences.notify ? "Enabled" : "Disabled";
-    }
-
-    string getTheme() const
-    {
-      return userProfile.preferences.theme.empty() ? "Default" : userProfile.preferences.theme;
-    }
-    */
-    // before calling, tell user to enter a username with wxWidgets
-    // needs to work with wxWidgets
-    void setUsername(const string& newUserName) {
-      if (newUserName.empty())
-        userProfile.username = "DefaultUser";
-      else
-        userProfile.username = newUserName;
-      userProfile.last_logged_in = userProfile.getCurrentDateTime();
-    }
-
-    // NOT IMPLEMENTED
-    /*
-    void toggleNotify()
-    {
-      userProfile.preferences.notify = !userProfile.preferences.notify;
-    }
-
-    void toggleTheme()
-    {
-      if (userProfile.preferences.theme == "dark")
-      {
-        userProfile.preferences.theme = "light";
-      }
-      else
-      {
-        userProfile.preferences.theme = "dark";
-      }
-    }
-    
-    // Friend declaration for the insertion operator
-    friend ostream& operator<<(ostream& os, const Client& client);
-    */
-  };
-
-  // NOT IMPLEMENTED
-  /*
-  ostream& operator<<(ostream& os, const Client& client) {
-    os << client.printProfile();  // Assuming printProfile() returns the formatted string
-    return os;
-  }
-  */
-
+  //*********************************************************************************
+  // GUI
   //*********************************************************************************
 
-  // Definition of the Chore class
-  class Chore {
-  private:
-    // Member variables to store chore details
-    int id;  // Unique identifier for the chore
-    int earnings;  // Monetary reward for completing the chore
+  // Fired by a DoerCardPanel when clicked; carries the doer's name via GetString(),
+  // so the existing name-keyed selectedDoerName plumbing in MainFrame needs no change.
+  wxDECLARE_EVENT(EVT_DOER_CARD_SELECTED, wxCommandEvent);
+  wxDEFINE_EVENT(EVT_DOER_CARD_SELECTED, wxCommandEvent);
 
-    // Descriptive attributes of the chore
-    string name;  // Name of the chore
-    string description;  // Description of what the chore entails
-    string frequency;  // How often the chore needs to be done
-    string estimated_time;  // Estimated time to complete the chore
-    string notes;  // Additional notes about the chore
-    string location;  // Location where the chore needs to be done
-
-    // Lists that describe when and how the chore is to be done
-    vector<string> days;  // Days of the week the chore is active
-    vector<string> tools_required;  // Tools required to complete the chore
-    vector<string> materials_needed;  // Materials needed to complete the chore
-    vector<string> tags;  // Tags for categorizing or searching for the chore
-
-    // Enumerated types for managing chore metadata
-    DIFFICULTY Difficulty;  // Difficulty level of the chore
-    STATUS Status;  // Current status of the chore (e.g., not started, in progress)
-    PRIORITY Priority;  // Priority level of the chore
-
+  // A small owner-drawn rounded button used across the main tabs for a friendlier
+  // look than a native wxButton. Fires a genuine wxEVT_BUTTON with its own id on
+  // click, so every existing Bind(wxEVT_BUTTON, &MainFrame::OnX, this) call site
+  // works completely unmodified after swapping the constructor call.
+  class RoundedButton : public wxPanel {
   public:
-    // Constructor that initializes a Chore object from a JSON object
-    Chore(const json& j) {
-      // Parsing JSON to initialize member variables
-      id = j["id"].is_null() ? -1 : j["id"].get<int>();
-      name = j["name"].is_null() ? "" : j["name"].get<string>();
-      description = j["description"].is_null() ? "" : j["description"].get<string>();
-      frequency = j["frequency"].is_null() ? "" : j["frequency"].get<string>();
-      estimated_time = j["estimated_time"].is_null() ? "" : j["estimated_time"].get<string>();
-      earnings = j["earnings"].is_null() ? 0 : j["earnings"].get<int>();
-
-      // Initializing vectors from JSON arrays, defaulting to empty if not provided
-      days = j["days"].is_null() ? vector<string>() : j["days"].get<vector<string>>();
-      location = j["location"].is_null() ? "" : j["location"].get<string>();
-      tools_required = j["tools_required"].is_null() ? vector<string>() : j["tools_required"].get<vector<string>>();
-      materials_needed = j["materials_needed"].is_null() ? vector<string>() : j["materials_needed"].get<vector<string>>();
-      notes = j["notes"].is_null() ? "" : j["notes"].get<string>();
-      tags = j["tags"].is_null() ? vector<string>() : j["tags"].get<vector<string>>();
-
-      // Initialize enum values using helper functions
-      Difficulty = parseDifficulty(j);
-      Priority = parsePriority(j);
-      Status = parseStatus(j);
+    RoundedButton(wxWindow* parent, wxWindowID id, const wxString& label,
+      const wxColour& baseColor = wxColour(108, 92, 231), const wxSize& size = wxSize(120, 36))
+      : wxPanel(parent, id, wxDefaultPosition, size, wxBORDER_NONE),
+      baseColor(baseColor), hovered(false), pressed(false)
+    {
+      SetLabel(label);
+      SetBackgroundStyle(wxBG_STYLE_PAINT);
+      SetCursor(wxCursor(wxCURSOR_HAND));
+      Bind(wxEVT_PAINT, &RoundedButton::OnPaint, this);
+      Bind(wxEVT_ENTER_WINDOW, &RoundedButton::OnEnter, this);
+      Bind(wxEVT_LEAVE_WINDOW, &RoundedButton::OnLeave, this);
+      Bind(wxEVT_LEFT_DOWN, &RoundedButton::OnLeftDown, this);
+      Bind(wxEVT_LEFT_UP, &RoundedButton::OnLeftUp, this);
     }
 
-    // Default constructor
-    Chore() = default;
-
-    // Virtual destructor
-    virtual ~Chore() {}
-
-    // NOT IMPLEMENTED
-    /*
-    // Method to start a chore, modifying its status based on current state
-    virtual void startChore() {
-      if (Status == STATUS::NOT_STARTED) {
-        cout << "In Progress: " << name << endl;
-        Status = STATUS::IN_PROGRESS;
-      }
-      else if (Status == STATUS::IN_PROGRESS) {
-        cout << "Chore already started " << name << endl;
-      }
-      else if (Status == STATUS::COMPLETED) {
-        cout << "In Progress: " << name << endl;
-        Status = STATUS::IN_PROGRESS;
-      }
-    }
-
-    // Method to mark a chore as completed, modifying its status based on current state
-    virtual void completeChore() {
-      if (Status == STATUS::NOT_STARTED || Status == STATUS::IN_PROGRESS) {
-        cout << "Completed: " << name << endl;
-        Status = STATUS::COMPLETED;
-      }
-      else if (Status == STATUS::COMPLETED) {
-        cout << "Chore already completed: " << name << endl;
-      }
-    }
-
-    // Method to reset a chore to not started, regardless of its current state
-    virtual void resetChore() {
-      if (Status == STATUS::NOT_STARTED) {
-        cout << "Chore not started: " << name << endl;
-      }
-      else if (Status == STATUS::IN_PROGRESS || Status == STATUS::COMPLETED) {
-        cout << "Resetting: " << name << endl;
-        Status = STATUS::NOT_STARTED;
-      }
-    }
-    */
-
-    // Serialize the chore object to JSON
-    virtual json toJSON() const {
-      return json{
-          {"id", id},
-          {"name", name},
-          {"description", description},
-          {"frequency", frequency},
-          {"estimated_time", estimated_time},
-          {"earnings", earnings},
-          {"days", days},
-          {"location", location},
-          {"tools_required", tools_required},
-          {"materials_needed", materials_needed},
-          {"notes", notes},
-          {"tags", tags},
-          {"difficulty", toStringD(Difficulty)},
-          {"priority", toStringP(Priority)},
-          {"status", toStringS(Status)}
-      };
-    }
-
-    // Method to return a formatted string containing all chore attributes for display
-    // Uses helper functions to format enum values and vectors
-    virtual string PrettyPrintClassAttributes() const {
-      string result = "Chore ID: " + to_string(id) + "\n"
-        "Name: " + name + "\n"
-        "Description: " + description + "\n"
-        "Frequency: " + frequency + "\n"
-        "Estimated Time: " + estimated_time + "\n"
-        "Earnings: " + to_string(earnings) + "\n"
-        "Days: " + formatVector(days) + "\n"
-        "Location: " + location + "\n"
-        "Tools Required: " + formatVector(tools_required) + "\n"
-        "Materials Needed: " + formatVector(materials_needed) + "\n"
-        "Notes: " + notes + "\n"
-        "Tags: " + formatVector(tags) + "\n"
-        "Status: " + toStringS(Status) + "\n"
-        "Priority: " + toStringP(Priority) + "\n"
-        "Difficulty: " + toStringD(Difficulty);
-
+    bool Enable(bool enable = true) override {
+      bool result = wxPanel::Enable(enable);
+      hovered = false;
+      pressed = false;
+      Refresh();
       return result;
     }
 
-    // Method to modify chore name and description interactively
-    // NOT IMPLEMENTED
-    /*
-    virtual void modifyChore() {
-      cout << "Modifying Chore..." << endl;
-      cout << "Enter new chore name: ";
-      getline(cin, name);
-      cout << "Enter new chore description: ";
-      getline(cin, description);
-    }
-    */
-
-    // Method to print a simple representation of the chore
-    string simplePrint() const {
-      string result = "Chore ID: " + to_string(id) + "\n"
-        + "Name: " + name + "\n"  // Convert wxString to string
-        + "Description: " + description + "\n"  // Convert wxString to string
-        + "Earnings: " + to_string(earnings) + "\n";
-
-      return result;
-    }
-
-
-    // Friend declaration for operator<<
-    friend ostream& operator<<(ostream& os, const Chore& chore);
-
-    // Comparison operator for checking equality between two chores
-    virtual bool operator==(const Chore& other) const {
-      return (this->id == other.id &&
-        this->name == other.name &&
-        this->description == other.description &&
-        this->frequency == other.frequency &&
-        this->estimated_time == other.estimated_time &&
-        this->earnings == other.earnings &&
-        this->days == other.days &&
-        this->location == other.location &&
-        this->tools_required == other.tools_required &&
-        this->materials_needed == other.materials_needed &&
-        this->notes == other.notes &&
-        this->tags == other.tags &&
-        this->Difficulty == other.Difficulty &&
-        this->Status == other.Status &&
-        this->Priority == other.Priority);
-    }
-
-    // New overloaded inequality operator
-    bool operator!=(const Chore& other) const {
-      return !(*this == other);
-    }
-
-    //ONLY FEW GETTERS AND SETTERS ARE IMPLEMENTED IN THIS VERSION
-    // getter and setter methods incorporating triggerUpdate where needed
-    int getId() const {
-      return id;
-    }
-
-    void setId(int newId) {
-      id = newId;
-    }
-
-    string getName() const {
-      return name;
-    }
-
-    void setName(const string& newName) {
-      name = newName;
-    }
-
-    string getDescription() const {
-      return description;
-    }
-
-    void setDescription(const string& newDescription) {
-      description = newDescription;
-      
-    }
-
-    string getFrequency() const {
-      return frequency;
-    }
-
-    void setFrequency(const string& newFrequency) {
-      frequency = newFrequency;
-      
-    }
-
-    string getEstimatedTime() const {
-      return estimated_time;
-    }
-
-    void setEstimatedTime(const string& newTime) {
-      estimated_time = newTime;
-      
-    }
-
-    int getEarnings() const {
-      return earnings;
-    }
-
-    void setEarnings(int newEarnings) {
-      earnings = newEarnings;
-      
-    }
-
-    vector<string> getDays() const {
-      return days;
-    }
-
-    void setDays(const vector<string>& newDays) {
-      days = newDays;
-    }
-
-    string getLocation() const {
-      return location;
-    }
-
-    void setLocation(const string& newLocation) {
-      location = newLocation;
-      
-    }
-
-    vector<string> getToolsRequired() const {
-      return tools_required;
-    }
-
-    void setToolsRequired(const vector<string>& newTools) {
-      tools_required = newTools;
-      
-    }
-
-    vector<string> getMaterialsNeeded() const {
-      return materials_needed;
-    }
-
-    void setMaterialsNeeded(const vector<string>& newMaterials) {
-      materials_needed = newMaterials;
-      
-    }
-
-    string getNotes() const {
-      return notes;
-    }
-
-    void setNotes(const string& newNotes) {
-      notes = newNotes;
-      
-    }
-
-    vector<string> getTags() const {
-      return tags;
-    }
-
-    void setTags(const vector<string>& newTags) {
-      tags = newTags;
-      
-    }
-
-    DIFFICULTY getDifficulty() const {
-      return Difficulty;
-    }
-
-    void setDifficulty(DIFFICULTY newDifficulty) {
-      Difficulty = newDifficulty;
-    }
-
-    STATUS getStatus() const {
-      return Status;
-    }
-
-    void setStatus(STATUS newStatus)
-    {
-      Status = newStatus;
-    }
-
-    PRIORITY getPriority() const
-    {
-      return Priority;
-    }
-
-    void setPriority(PRIORITY newPriority)
-    {
-      Priority = newPriority;
-    }
-
-    // Helper method to format a vector of strings for display
-    static string formatVector(const vector<string>& vec) {
-      string result;
-      for (const auto& item : vec) {
-        if (!result.empty()) result += ", ";
-        result += item;
-      }
-      return result.empty() ? "None" : result;
-    }
-
-    // Helper methods to parse enumeration values from JSON
-    DIFFICULTY parseDifficulty(const json& j) {
-      if (!j.contains("difficulty") || j["difficulty"].is_null()) {
-        return DIFFICULTY::EASY;  // Default to EASY if not specified
-      }
-      string dif = j["difficulty"].get<string>();
-      if (dif == "easy") return DIFFICULTY::EASY;
-      if (dif == "medium") return DIFFICULTY::MEDIUM;
-      if (dif == "hard") return DIFFICULTY::HARD;
-      return DIFFICULTY::EASY;  // Default case
-    }
-
-    PRIORITY parsePriority(const json& j) {
-      if (!j.contains("priority") || j["priority"].is_null()) {
-        return PRIORITY::LOW;  // Default to LOW if not specified
-      }
-      string pri = j["priority"].get<string>();
-      if (pri == "low") return PRIORITY::LOW;
-      if (pri == "moderate") return PRIORITY::MODERATE;
-      if (pri == "high") return PRIORITY::HIGH;
-      return PRIORITY::LOW;  // Default case
-    }
-
-    STATUS parseStatus(const json& j) {
-      if (!j.contains("status") || j["status"].is_null()) {
-        return STATUS::NOT_STARTED;  // Default to NOT_STARTED if not specified
-      }
-      string stat = j["status"].get<string>();
-      if (stat == "not started") return STATUS::NOT_STARTED;
-      if (stat == "in progress") return STATUS::IN_PROGRESS;
-      if (stat == "completed") return STATUS::COMPLETED;
-      return STATUS::NOT_STARTED;  // Default case
-    }
-
-    // Methods to convert ENUM values to strings for output
-    string toStringD(DIFFICULTY d) const {
-      switch (d) {
-      case DIFFICULTY::EASY: return "easy";
-      case DIFFICULTY::MEDIUM: return "medium";
-      case DIFFICULTY::HARD: return "hard";
-      default: return "easy";  // Default to "easy" if unknown
-      }
-    }
-
-    string toStringS(STATUS s) const {
-      switch (s) {
-      case STATUS::NOT_STARTED: return "not started";
-      case STATUS::IN_PROGRESS: return "in progress";
-      case STATUS::COMPLETED: return "completed";
-      default: return "not started";  // Default to "not started" if unknown
-      }
-    }
-
-    string toStringP(PRIORITY p) const {
-      switch (p) {
-      case PRIORITY::LOW: return "low";
-      case PRIORITY::MODERATE: return "moderate";
-      case PRIORITY::HIGH: return "high";
-      default: return "low";  // Default to "low" if unknown
-      }
-    }
-  };
-
-  // Implementation of the operator<< for Chore class
-  ostream& operator<<(ostream& os, const Chore& chore) {
-    os << chore.PrettyPrintClassAttributes();
-    return os;
-  }
-
-  // Comparison structures for sorting chores based on specific attributes
-  struct CompareEarnings {
-    bool operator()(const shared_ptr<Chore>& a, const shared_ptr<Chore>& b) const {
-      return a->getEarnings() < b->getEarnings();
-    }
-  };
-
-  struct CompareDifficulty {
-    bool operator()(const shared_ptr<Chore>& a, const shared_ptr<Chore>& b) const {
-      return a->getDifficulty() < b->getDifficulty(); // Ensure Difficulty can be compared
-    }
-  };
-
-  struct CompareID {
-    bool operator()(const shared_ptr<Chore>& a, const shared_ptr<Chore>& b) const {
-      return a->getId() < b->getId();
-    }
-  };
-
-  struct CompareName
-  {
-    bool operator()(const shared_ptr<Chore>& a, const shared_ptr<Chore>& b) const
-    {
-      return a->getName() < b->getName();
-    }
-  };
-
-  // Search criteria functions
-  bool matchById(const shared_ptr<Chore>& chore, const int& id) {
-    return chore->getId() == id;
-  }
-
-  bool matchByName(const shared_ptr<Chore>& chore, const string& name) {
-    return chore->getName() == name;
-  }
-
-  bool matchByEarnings(const shared_ptr<Chore>& chore, const int& earnings) {
-    return chore->getEarnings() == earnings;
-  }
-  //*********************************************************************
-
-  /*Class definition of an easy chore, derived from Chore*/
-  class EasyChore : public Chore {
   private:
-    string multitasking_tips;  // Tips for multitasking while performing the chore
+    wxColour baseColor;
+    bool hovered;
+    bool pressed;
 
-  public:
-    // Constructor that initializes an EasyChore from a JSON object
-    EasyChore(const json& j) : Chore(j) {
-      multitasking_tips = j["multitasking_tips"];  // Extract multitasking tips from JSON
+    static wxColour Shade(const wxColour& c, int delta) {
+      auto clamp = [](int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); };
+      return wxColour(clamp(c.Red() + delta), clamp(c.Green() + delta), clamp(c.Blue() + delta));
     }
 
-    /*
-    // Override the startChore method to include multitasking tips
-    void startChore() override {
-      cout << "Starting easy chore: " << endl;
-      Chore::startChore();  // Call base class implementation
-      cout << "Multitasking Tips: " << multitasking_tips << endl;  // Output multitasking tips
+    void OnPaint(wxPaintEvent&) {
+      wxAutoBufferedPaintDC dc(this);
+      wxColour parentBg = GetParent() ? GetParent()->GetBackgroundColour() : *wxWHITE;
+      dc.SetBackground(wxBrush(parentBg));
+      dc.Clear();
+
+      wxGraphicsContext* gc = wxGraphicsContext::Create(dc);
+      if (!gc) return;
+
+      wxColour fill = !IsEnabled() ? wxColour(200, 200, 200)
+        : pressed ? Shade(baseColor, -30)
+        : hovered ? Shade(baseColor, 20)
+        : baseColor;
+
+      wxRect rect = GetClientRect();
+      gc->SetBrush(wxBrush(fill));
+      gc->SetPen(wxPen(Shade(fill, -40), 1));
+      gc->DrawRoundedRectangle(1, 1, rect.width - 2, rect.height - 2, 10);
+
+      wxFont font = GetFont();
+      font.SetWeight(wxFONTWEIGHT_BOLD);
+      gc->SetFont(font, IsEnabled() ? *wxWHITE : wxColour(230, 230, 230));
+      wxString label = GetLabel();
+      double textW, textH;
+      gc->GetTextExtent(label, &textW, &textH);
+      gc->DrawText(label, (rect.width - textW) / 2, (rect.height - textH) / 2);
+
+      delete gc;
     }
 
-    // Override the completeChore method to add behavior for easy chores
-    void completeChore() override {
-      cout << "Completing easy chore: " << endl;
-      Chore::completeChore();  // Call base class implementation
-      cout << "Earnings from chore: " << getEarnings() << endl;  // Output earnings from the chore
-    }
+    void OnEnter(wxMouseEvent&) { if (IsEnabled()) { hovered = true; Refresh(); } }
+    void OnLeave(wxMouseEvent&) { hovered = false; pressed = false; Refresh(); }
+    void OnLeftDown(wxMouseEvent&) { if (IsEnabled()) { pressed = true; Refresh(); } }
 
-    // Override the resetChore method to add behavior specific to easy chores
-    void resetChore() override {
-      cout << "Resetting easy chore: " << endl;
-      Chore::resetChore();  // Call base class implementation
-    }
-    */
-
-    // Provide a string representation of the class's attributes
-    string PrettyPrintClassAttributes() const override {
-      return Chore::PrettyPrintClassAttributes() +
-        "\nMultitasking Tips: " + multitasking_tips;  // Append multitasking tips to output
-    }
-
-    // Equality comparison to check if two EasyChore objects are the same
-    bool operator==(const EasyChore& other) const {
-      if (Chore::operator==(other)) {  // First compare base class attributes
-        return multitasking_tips == other.multitasking_tips;  // Then compare multitasking tips
+    void OnLeftUp(wxMouseEvent&) {
+      if (IsEnabled() && pressed) {
+        pressed = false;
+        Refresh();
+        wxCommandEvent evt(wxEVT_BUTTON, GetId());
+        evt.SetEventObject(this);
+        ProcessWindowEvent(evt);
       }
-      return false;
-    }
-
-    // Convert the object's data to JSON, adding specific attributes
-    json toJSON() const override {
-      json j = Chore::toJSON();  // Start with base class JSON
-      j["multitasking_tips"] = multitasking_tips;  // Add multitasking tips
-      return j;
-    }
-
-    string getMultitaskingTips() {
-      return multitasking_tips;
-    }
-
-    void setMultitaskingTips(const string& newTip) {
-      multitasking_tips = newTip;
     }
   };
 
-  //************************************************************************************************
-
-  /*Class definition of a medium chore, derived from Chore*/
-  class MediumChore : public Chore {
-  private:
-    vector<string> variations;  // List of variations of the medium chore
-
+  // A colored circle with a bold initial letter, used both small (in doer cards) and
+  // large (in the profile panel) — same class, different constructor size.
+  class AvatarCircle : public wxWindow {
   public:
-    // Constructor that initializes a MediumChore from a JSON object
-    MediumChore(const json& j) : Chore(j) {
-      variations = j["variations"].is_null() ? vector<string>() : j["variations"].get<vector<string>>();  // Parse variations from JSON
+    AvatarCircle(wxWindow* parent, wxWindowID id, const wxColour& color, const wxString& initial, const wxSize& size)
+      : wxWindow(parent, id, wxDefaultPosition, size), color(color), initial(initial)
+    {
+      SetBackgroundStyle(wxBG_STYLE_PAINT);
+      Bind(wxEVT_PAINT, &AvatarCircle::OnPaint, this);
     }
 
-    /*
-    // Override the startChore method to display available variations
-    void startChore() override {
-      cout << "Starting medium chore: " << endl;
-      Chore::startChore();  // Call base class implementation
-      cout << "Variations available: ";
-      for (const auto& variation : variations) {
-        cout << variation << (variation != variations.back() ? ", " : "");  // Output each variation
-      }
-      cout << endl;
-    }
+    void SetAvatarColor(const wxColour& newColor) { color = newColor; Refresh(); }
+    void SetInitial(const wxString& newInitial) { initial = newInitial; Refresh(); }
 
-    // Override the completeChore method to add behavior for medium chores
-    void completeChore() override {
-      cout << "Completing medium chore: " << endl;
-      Chore::completeChore();  // Call base class implementation
-      cout << "Earnings from chore: " << getEarnings() << endl;  // Output earnings from the chore
-    }
+  private:
+    wxColour color;
+    wxString initial;
 
-    // Override the resetChore method for medium chores
-    void resetChore() override {
-      cout << "Resetting medium chore: " << endl;
-      Chore::resetChore();  // Call base class implementation
-    }
-    */
+    void OnPaint(wxPaintEvent&) {
+      wxAutoBufferedPaintDC dc(this);
+      wxColour parentBg = GetParent() ? GetParent()->GetBackgroundColour() : *wxWHITE;
+      dc.SetBackground(wxBrush(parentBg));
+      dc.Clear();
 
-    // Provide a string representation of the class's attributes including variations
-    string PrettyPrintClassAttributes() const override {
-      return Chore::PrettyPrintClassAttributes() +
-        "\nVariations: " + formatVector(variations);  // Append variations to output
-    }
+      wxGraphicsContext* gc = wxGraphicsContext::Create(dc);
+      if (!gc) return;
 
-    // Equality comparison to check if two MediumChore objects are the same
-    bool operator==(const MediumChore& other) const {
-      if (Chore::operator==(other)) {  // First compare base class attributes
-        return variations == other.variations;  // Then compare variations
-      }
-      return false;
-    }
+      wxRect rect = GetClientRect();
+      int d = min(rect.width, rect.height);
+      double ox = (rect.width - d) / 2.0;
+      double oy = (rect.height - d) / 2.0;
 
-    // Convert the object's data to JSON, including variations
-    json toJSON() const override {
-      json j = Chore::toJSON();  // Start with base class JSON
-      j["variations"] = variations;  // Add variations
-      return j;
-    }
+      gc->SetBrush(wxBrush(color));
+      gc->SetPen(*wxTRANSPARENT_PEN);
+      gc->DrawEllipse(ox, oy, d, d);
 
-    vector<string> getVariations() {
-      return variations;
-    }
+      wxFont font = GetFont();
+      font.SetWeight(wxFONTWEIGHT_BOLD);
+      font.SetPointSize(max(8, d / 2));
+      gc->SetFont(font, *wxWHITE);
+      double textW, textH;
+      gc->GetTextExtent(initial, &textW, &textH);
+      gc->DrawText(initial, ox + (d - textW) / 2, oy + (d - textH) / 2);
 
-    void setVariations(const vector<string> &newVariation) {
-      variations = newVariation;
+      delete gc;
     }
   };
 
-  //************************************************************************************************
-
-  /*Class definition of a hard chore, derived from Chore*/
-  class HardChore : public Chore {
-  private:
-    // Structure to represent subtasks within a hard chore
-    struct Subtask {
-      string name;  // Name of the subtask
-      string estimated_time;  // Estimated time to complete the subtask
-      int earnings;  // Potential earnings from completing the subtask
-
-      // Constructor that initializes a Subtask from a JSON object
-      Subtask(const json& subtaskJson) :
-        name(subtaskJson["name"].is_null() ? "" : subtaskJson["name"].get<string>()),
-        estimated_time(subtaskJson["estimated_time"].is_null() ? "" : subtaskJson["estimated_time"].get<string>()),
-        earnings(subtaskJson["earnings"].is_null() ? 0 : subtaskJson["earnings"].get<int>()) {}
-
-      // Equality comparison operator for Subtask
-      bool operator==(const Subtask& other) const {
-        return name == other.name &&
-          estimated_time == other.estimated_time &&
-          earnings == other.earnings;
-      }
-    };
-
-    vector<Subtask> subtasks;  // List of subtasks for the hard chore
-
+  // A clickable card summarizing one chore doer (avatar, name, streak, earnings),
+  // used as the master list on the redesigned Chore Doers tab. Fully self-painted
+  // (no child controls) so its rounded background and the avatar circle composite
+  // cleanly without any child-background-color matching to worry about.
+  class DoerCardPanel : public wxPanel {
   public:
-    // Constructor that initializes a HardChore from a JSON object
-    HardChore(const json& j) : Chore(j) {
-      if (!j["subtasks"].is_null() && j["subtasks"].is_array()) {
-        for (const auto& subtaskJson : j["subtasks"]) {
-          subtasks.push_back(Subtask(subtaskJson));  // Initialize subtasks from JSON array
-        }
-      }
+    DoerCardPanel(wxWindow* parent, wxWindowID id, const wxString& doerName, const wxColour& avatarColor,
+      const wxString& streakText, const wxString& earningsText)
+      : wxPanel(parent, id, wxDefaultPosition, wxSize(240, 64), wxBORDER_NONE),
+      doerName(doerName), avatarColor(avatarColor), streakText(streakText), earningsText(earningsText), selected(false)
+    {
+      SetBackgroundStyle(wxBG_STYLE_PAINT);
+      SetCursor(wxCursor(wxCURSOR_HAND));
+      Bind(wxEVT_PAINT, &DoerCardPanel::OnPaint, this);
+      Bind(wxEVT_LEFT_UP, &DoerCardPanel::OnClick, this);
     }
 
-    /*
-    // Override the startChore method to display subtask details
-    void startChore() override {
-      cout << "Starting hard chore: " << endl;
-      Chore::startChore();  // Call base class implementation
-      for (const auto& subtask : subtasks) {
-        cout << "  Subtask: " << subtask.name << ", Time: " << subtask.estimated_time << ", Earnings: $" << to_string(subtask.earnings) << endl;
-      }
+    void SetSelected(bool sel) { selected = sel; Refresh(); }
+    bool IsSelected() const { return selected; }
+    wxString GetDoerName() const { return doerName; }
+
+    void UpdateInfo(const wxColour& newAvatarColor, const wxString& newStreakText, const wxString& newEarningsText) {
+      avatarColor = newAvatarColor;
+      streakText = newStreakText;
+      earningsText = newEarningsText;
+      Refresh();
     }
 
-    // Override the completeChore method to add behavior for hard chores
-    void completeChore() override {
-      cout << "Completing hard chore: " << endl;
-      cout << "Earnings from chore: " << getEarnings() << endl;  // Output earnings from the chore
+  private:
+    wxString doerName;
+    wxColour avatarColor;
+    wxString streakText;
+    wxString earningsText;
+    bool selected;
+
+    void OnClick(wxMouseEvent&) {
+      wxCommandEvent evt(EVT_DOER_CARD_SELECTED, GetId());
+      evt.SetString(doerName);
+      evt.SetEventObject(this);
+      ProcessWindowEvent(evt);
     }
 
-    // Override the resetChore method for hard chores
-    void resetChore() override {
-      cout << "Resetting hard chore: " << endl;
-      Chore::resetChore();  // Call base class implementation
-    }
-    */
+    void OnPaint(wxPaintEvent&) {
+      wxAutoBufferedPaintDC dc(this);
+      wxColour bg = selected ? wxColour(255, 244, 214) : *wxWHITE;
+      dc.SetBackground(wxBrush(bg));
+      dc.Clear();
 
-    // Provide a string representation of the class's attributes including subtasks
-    string PrettyPrintClassAttributes() const override {
-      string result = Chore::PrettyPrintClassAttributes();  // Start with base class attributes
-      for (const auto& subtask : subtasks) {
-        result += "\nSubtask: " + subtask.name +
-          ", Time: " + subtask.estimated_time +
-          ", Earnings: $" + to_string(subtask.earnings);  // Append each subtask details
-      }
-      return result;  // Return the formatted string
-    }
+      wxGraphicsContext* gc = wxGraphicsContext::Create(dc);
+      if (!gc) return;
 
-    // Equality comparison to check if two HardChore objects are the same
-    bool operator==(const HardChore& other) const {
-      if (!Chore::operator==(other)) {  // First compare base class attributes
-        return false;
-      }
+      wxRect rect = GetClientRect();
+      gc->SetBrush(wxBrush(bg));
+      gc->SetPen(selected ? wxPen(wxColour(255, 183, 27), 2) : wxPen(wxColour(225, 225, 225), 1));
+      gc->DrawRoundedRectangle(2, 2, rect.width - 4, rect.height - 4, 12);
 
-      if (this->subtasks.size() != other.subtasks.size()) {  // Ensure both have the same number of subtasks
-        return false;
-      }
+      double d = rect.height - 20;
+      double cx = 12, cy = 10;
+      gc->SetBrush(wxBrush(avatarColor));
+      gc->SetPen(*wxTRANSPARENT_PEN);
+      gc->DrawEllipse(cx, cy, d, d);
 
-      for (size_t i = 0; i < this->subtasks.size(); ++i) {
-        if (!(this->subtasks[i] == other.subtasks[i])) {  // Compare each subtask individually
-          return false;
-        }
-      }
+      wxFont initialFont = GetFont();
+      initialFont.SetWeight(wxFONTWEIGHT_BOLD);
+      initialFont.SetPointSize((int)(d / 2.2));
+      gc->SetFont(initialFont, *wxWHITE);
+      wxString initial = doerName.IsEmpty() ? wxString("?") : doerName.Left(1).Upper();
+      double textW, textH;
+      gc->GetTextExtent(initial, &textW, &textH);
+      gc->DrawText(initial, cx + (d - textW) / 2, cy + (d - textH) / 2);
 
-      return true;  // Return true if all checks pass
-    }
+      double textX = cx + d + 12;
+      wxFont nameFont = GetFont();
+      nameFont.SetWeight(wxFONTWEIGHT_BOLD);
+      gc->SetFont(nameFont, *wxBLACK);
+      gc->DrawText(doerName, textX, 6);
 
-    // Convert the object's data to JSON, including subtasks
-    json toJSON() const override {
-      json j = Chore::toJSON();  // Start with base class JSON
-      json subtasksJson = json::array();
-      for (const auto& subtask : subtasks) {
-        json stJson;
-        stJson["name"] = subtask.name;
-        stJson["estimated_time"] = subtask.estimated_time;
-        stJson["earnings"] = subtask.earnings;
-        subtasksJson.push_back(stJson);  // Add each subtask to the JSON array
-      }
-      j["subtasks"] = subtasksJson;  // Add subtasks array to the chore JSON
-      return j;
-    }
+      wxFont smallFont = GetFont();
+      smallFont.SetPointSize(max(7, smallFont.GetPointSize() - 1));
+      gc->SetFont(smallFont, wxColour(90, 90, 90));
+      gc->DrawText(streakText, textX, 27);
+      gc->DrawText(earningsText, textX, 44);
 
-    // Getter function to retrieve the vector of subtasks
-    const vector<Subtask>& getSubtasks() const {
-      return subtasks;
-    }
-
-    // Setter function to set the vector of subtasks
-    void setSubtasks(const vector<Subtask>& newSubtasks) {
-      subtasks = newSubtasks;
+      delete gc;
     }
   };
 
-  //*********************************************************************************
-
-  /*Templated Class definition of a Container of shared pointers (Example: vector<shared_ptr<Chore>> chores)*/
-  template<typename T>
-  class Container {
-  private:
-    vector<shared_ptr<T>> items;  // A vector to store shared pointers to objects of type T
-
-
-
+  // Lets the user search chores by ID, name, or earnings, and view the results inline.
+  class SearchDialog : public wxDialog {
   public:
-    Container() {}  // Correct way, automatically initializes an empty vector of shared_ptr<T>
+    SearchDialog(wxWindow* parent, ChoreManager& manager)
+      : wxDialog(parent, wxID_ANY, "Search Chores", wxDefaultPosition, wxSize(420, 420)), manager(manager)
+    {
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
 
-    // Generic bubble sort using comparator
-    template<typename Comparator>
-    void sortItems(Comparator comp, bool ascending = true) {
-      try {
-        bool swapped;  // Flag to keep track of whether any items were swapped during a pass
-        do {
-          swapped = false;  // Reset swapped flag for each pass
-          for (size_t i = 1; i < items.size(); i++) {  // Loop through items
-            // Perform comparison and possibly swap items
-            if ((ascending && comp(items[i - 1], items[i])) || (!ascending && comp(items[i], items[i - 1]))) {
-              swap(items[i - 1], items[i]);  // Swap the items if needed
-              swapped = true;  // Set swapped flag if a swap has occurred
-            }
-          }
-        } while (swapped);  // Continue sorting until no swaps are made in a pass
-      }
-      catch (const exception& e) {
-        cerr << "Exception thrown in sortItems: " << e.what() << endl;  // Output any exceptions to standard error
-      }
+      wxArrayString modes;
+      modes.Add("By ID");
+      modes.Add("By Name");
+      modes.Add("By Earnings");
+      modeBox = new wxRadioBox(this, wxID_ANY, "Search by", wxDefaultPosition, wxDefaultSize, modes, 1, wxRA_SPECIFY_ROWS);
+      mainSizer->Add(modeBox, 0, wxALL | wxEXPAND, 8);
+
+      valueCtrl = new wxTextCtrl(this, wxID_ANY);
+      mainSizer->Add(valueCtrl, 0, wxALL | wxEXPAND, 8);
+
+      wxButton* searchBtn = new wxButton(this, wxID_ANY, "Search");
+      mainSizer->Add(searchBtn, 0, wxALL | wxALIGN_CENTER, 4);
+
+      resultsList = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxSize(380, 180), wxLC_REPORT | wxLC_SINGLE_SEL);
+      resultsList->InsertColumn(0, "ID", wxLIST_FORMAT_LEFT, 40);
+      resultsList->InsertColumn(1, "Name", wxLIST_FORMAT_LEFT, 160);
+      resultsList->InsertColumn(2, "Earnings", wxLIST_FORMAT_LEFT, 70);
+      resultsList->InsertColumn(3, "Status", wxLIST_FORMAT_LEFT, 100);
+      mainSizer->Add(resultsList, 1, wxALL | wxEXPAND, 8);
+
+      wxButton* closeBtn = new wxButton(this, wxID_CANCEL, "Close");
+      mainSizer->Add(closeBtn, 0, wxALL | wxALIGN_CENTER, 4);
+
+      SetSizerAndFit(mainSizer);
+
+      searchBtn->Bind(wxEVT_BUTTON, &SearchDialog::OnSearch, this);
     }
 
-    // Templated search method
-    template<typename Key>
-    vector<shared_ptr<T>> searchItem(const Key& key, function<bool(const shared_ptr<T>&, const Key&)> matchCriteria) {
-      vector<shared_ptr<T>> results;
-      for (auto& item : items) {
-        if (matchCriteria(item, key)) {
-          results.push_back(item);
-        }
-      }
-      return results;
-    }
+  private:
+    ChoreManager& manager;
+    wxRadioBox* modeBox;
+    wxTextCtrl* valueCtrl;
+    wxListCtrl* resultsList;
 
-    // Function to display search results
-    void displaySearchResults(const vector<shared_ptr<T>>& results) {
+    void OnSearch(wxCommandEvent&) {
+      vector<shared_ptr<Chore>> results;
+      wxString value = valueCtrl->GetValue();
+      int mode = modeBox->GetSelection();
+      long numericValue = 0;
+      if ((mode == 0 || mode == 2) && !value.ToLong(&numericValue)) {
+        wxMessageBox("Enter a valid whole number.", "Invalid Input", wxOK | wxICON_WARNING, this);
+        return;
+      }
+      if (mode == 0) {
+        results = manager.searchByID((int)numericValue);
+      }
+      else if (mode == 1) {
+        results = manager.searchByName(value.ToStdString());
+      }
+      else {
+        results = manager.searchByEarnings((int)numericValue);
+      }
+
+      resultsList->DeleteAllItems();
+      for (const auto& chore : results) {
+        long row = resultsList->InsertItem(resultsList->GetItemCount(), to_string(chore->getId()));
+        resultsList->SetItem(row, 1, chore->getName());
+        resultsList->SetItem(row, 2, to_string(chore->getEarnings()));
+        resultsList->SetItem(row, 3, chore->toStringS(chore->getStatus()));
+      }
       if (results.empty()) {
-        cerr << "Results are empty!";
+        wxMessageBox("No chore found matching that criteria.", "No Results", wxOK | wxICON_INFORMATION, this);
       }
-      else {
-        string info;
-        for (const auto& item : results) {
-          info += item->simplePrint() + "\n";
-        }
-        cout << info;
-      }
-    }
-
-    // Move an item from this container to another container based on its ID
-    void moveItemToAnotherContainer(int id, Container<T>& destination) {
-      bool found = false;  // Flag to check if item was found
-      for (auto it = items.begin(); it != items.end(); ++it) {  // Iterate through the items
-        if ((*it)->getId() == id) {  // Check if the current item's ID matches the specified ID
-          destination.items.push_back(*it);  // Add item to destination container
-          cout << "Chore moved successfully: " << (*it)->getName() << endl;
-          items.erase(it);  // Remove item from the current container
-          found = true;  // Set found flag
-          break;  // Exit loop after moving the item
-        }
-      }
-
-      if (!found) {
-        cout << "Chore not found." << endl;  // Inform if the item wasn't found
-      }
-    }
-
-    // Delete an item from the container based on its ID
-    void deleteItem(int id) {
-      for (auto it = items.begin(); it != items.end(); ++it) {  // Iterate through items
-        if ((*it)->getId() == id) {  // Check if current item's ID matches the specified ID
-          items.erase(it);  // Remove item from vector
-          break;  // Exit loop after removing item
-        }
-      }
-    }
-
-    // Add an item to the container
-    void push_back(const shared_ptr<T>& item) {
-      items.push_back(item);  // Append the item to the vector
-    }
-
-    // Return the number of items in the container
-    size_t size() const {
-      return items.size();
-    }
-
-    // Provide access to items by index
-    shared_ptr<T>& operator[](size_t index) {
-      return items[index];  // Return reference to the item at the given index
-    }
-
-    // Display all items in the container
-    void displayAllItems() const {
-      for (const auto& item : items) {  // Loop through all items
-        cout << "Chore: " << item->getName() << " (ID: " << item->getId() << ")" << endl;  // Display each item's name and ID
-      }
-    }
-
-    string returnAllItems() {
-      string info;
-      for (const auto& item : items) {
-        // Convert the integer ID to a string before concatenation
-        info += "Chore: " + item->getName() + " (ID: " + std::to_string(item->getId()) + ")\n";
-      }
-      return info;
-    }
-
-    string displayAllItemsAllAttributes()
-    {
-      string info;
-      for (const auto& item : items)
-      {
-        info += item->PrettyPrintClassAttributes() + "\n\n";
-      }
-      return info;
-    }
-
-    // Check if the container is empty
-    bool empty() const {
-      return items.empty();
-    }
-
-    // Clear all items from the container
-    void clear() {
-      items.clear();  // Clear the vector
-    }
-
-    // Provide access to the internal items vector
-    const vector<shared_ptr<T>>& item() const {
-      return items;
-    }
-
-    // Begin iterator for range-based loops
-    auto begin() -> decltype(items.begin()) {
-      return items.begin();
-    }
-
-    // End iterator for range-based loops
-    auto end() -> decltype(items.end()) {
-      return items.end();
-    }
-
-    // Const begin iterator for range-based loops over const containers
-    auto begin() const -> decltype(items.begin()) const {
-      return items.begin();
-    }
-
-    // Const end iterator for range-based loops over const containers
-    auto end() const -> decltype(items.end()) const {
-      return items.end();
     }
   };
 
-  //*********************************************************************************
-
-  // Definition of the ChoreDoer class, which manages a list of chores and related information
-  class ChoreDoer {
+  // Lets the user compare two chores by ID.
+  class CompareChoresDialog : public wxDialog {
   public:
-    // Container to store assigned chores
-    Container<Chore> assignedChores;
-
-    // Constructor to initialize a ChoreDoer with a name
-    ChoreDoer(const string& name) : name(name) {
-      age = 0;  // Default age is set to 0
-      choreAmount = 0;  // Initialize the count of assigned chores to 0
-      totalEarnings = 0;  // Initialize total earnings from completed chores to 0
-      assignedChores = Container<Chore>();  // Initialize the container for managing chores
-      id = 0;
-    }
-
-    // Method to assign a chore to the doer
-    void assignChore(const shared_ptr<Chore>& chore) {
-      assignedChores.push_back(chore);  // Add the chore to the container
-      choreAmount++;  // Increment the count of assigned chores
-    }
-
-    void removeChore(int index) {
-      assignedChores.deleteItem(index);
-    }
-
-    int getId() const
+    CompareChoresDialog(wxWindow* parent)
+      : wxDialog(parent, wxID_ANY, "Compare Two Chores")
     {
-      return id;
-    }
-    // Getter method to retrieve the chore doer's name
-    string getName() const {
-      return name;
-    }
-
-    void setName (const string &newName)
-    {
-      name = newName;
-    }
-
-    // Getter method to retrieve the total earnings accumulated from completed chores
-    int getTotalEarnings() const {
-      return totalEarnings;
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+      wxFlexGridSizer* grid = new wxFlexGridSizer(2, 2, 8, 8);
+      grid->Add(new wxStaticText(this, wxID_ANY, "First Chore ID:"));
+      id1Ctrl = new wxSpinCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 100000, 0);
+      grid->Add(id1Ctrl);
+      grid->Add(new wxStaticText(this, wxID_ANY, "Second Chore ID:"));
+      id2Ctrl = new wxSpinCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 100000, 0);
+      grid->Add(id2Ctrl);
+      mainSizer->Add(grid, 0, wxALL, 12);
+      mainSizer->Add(CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxEXPAND, 8);
+      SetSizerAndFit(mainSizer);
     }
 
-    // Getter method to retrieve the number of chores assigned to the doer
-    int getChoreAmount() const {
-      return choreAmount;
-    }
-
-    // Used when all chores are cleared from ChoreDoers assigned chores
-    // NOT IMPLEMENTED
-    /*
-    void resetChoreAmount()
-    {
-      choreAmount = 0;
-    }
-
-    // Used when a chore is removed from ChoreDoers assigned chores
-    void decreaseChoreAmount()
-    {
-      if (choreAmount > 0)
-      {
-        choreAmount--;
-      }
-    }
-    
-
-    // Method to generate a formatted string displaying chore doer's details
-    string printChoreDoer() const {
-      string result = "Chore Doer: " + name + "\n";  // Start with the chore doer's name
-      result += "Total Earnings: $" + to_string(totalEarnings) + "\n";  // Add total earnings
-      result += "Chore Amount: " + to_string(choreAmount) + "\n";  // Add number of chores assigned
-      return result;
-    }
-
-    // Sort assigned chores by earnings
-    void sortAssignedChoresByEarnings(bool ascending = true) {
-      if (!assignedChores.empty())
-      {
-        assignedChores.sortItems(CompareEarnings(), ascending);
-      }
-    }
-
-    // Sort assigned chores by difficulty
-    void sortAssignedChoresByDifficulty(bool ascending = true) {
-      if (!assignedChores.empty())
-      {
-        assignedChores.sortItems(CompareDifficulty(), ascending);
-      }
-    }
-
-    // Sort assigned chores by ID
-    void sortAssignedChoresByID(bool ascending = true) {
-      if (!assignedChores.empty())
-      {
-        assignedChores.sortItems(CompareID(), ascending);
-      }
-    }
-
-    // Method to start a chore based on its ID
-    void startChore(int choreId) {
-      for (auto& chore : assignedChores) {
-        if (chore->getId() == choreId) {
-          chore->startChore();  // Call startChore on the matching chore
-          break;
-        }
-      }
-    }
-
-    // Method to complete a chore based on its ID
-    void completeChore(int choreId) {
-      for (auto& chore : assignedChores) {
-        if (chore->getId() == choreId) {
-          if (chore->getStatus() == STATUS::IN_PROGRESS || chore->getStatus() == STATUS::NOT_STARTED) {
-            chore->completeChore();  // Complete the chore
-            totalEarnings += chore->getEarnings();  // Update total earnings
-            cout << "Chore " << chore->getName() << " completed. Total earnings now: $" << totalEarnings << endl;
-            break;
-          }
-          cout << "Chore " << chore->getName() << " is already completed. No action taken." << endl;
-        }
-      }
-    }
-
-    // Method to reset a chore based on its ID
-    void resetChore(int choreId) {
-      for (auto& chore : assignedChores) {
-        if (chore->getId() == choreId) {
-          if (chore->getStatus() == STATUS::COMPLETED || chore->getStatus() == STATUS::IN_PROGRESS) {
-            cout << "Resetting Chore: " << chore->getName() << endl;
-            chore->resetChore();
-          }
-          else {
-            cout << "Chore is already in the initial state (Not Started)." << endl;
-          }
-          return;
-        }
-      }
-      cout << "Chore ID " << choreId << " not found among assigned chores." << endl;
-    }
-    */
-
-    string returnAssignedChores()
-    {
-      return assignedChores.returnAllItems();
-    }
-
-    // Overloaded insertion operator to output the details of the ChoreDoer
-    friend ostream& operator<<(ostream& os, const ChoreDoer& chDoer);
+    int GetId1() const { return id1Ctrl->GetValue(); }
+    int GetId2() const { return id2Ctrl->GetValue(); }
 
   private:
-    string name;  // Name of the chore doer
-    int choreAmount;  // Number of chores assigned to the doer
-    int age;  // Age of the chore doer, not implemented in full
-    int totalEarnings;  // Total earnings from chores completed by the doer
-    int id;
+    wxSpinCtrl* id1Ctrl;
+    wxSpinCtrl* id2Ctrl;
   };
 
-  /* NOT IMPLEMENTED
-  // Overloaded ostream operator to facilitate easy output of ChoreDoer's state
-  ostream& operator<<(ostream& os, const ChoreDoer& chDoer) {
-    os << chDoer.printChoreDoer();  // Output formatted chore doer details
-    return os;
-  }
-  */
-  //*********************************************************************************
-  class ChoreManager {
-  private:
-    json j; // JSON object to store data
-    int choreCount; // Counter for the number of chores
-    Container<Chore> Chores; // Container to hold chores
-    Container<ChoreDoer> ChoreDoers; // List of chore doers
-    //Container<Chore> LeftoverChores; // Container for leftover chores
-    Client* client; // Client object, part of the ChoreManager
-    string dynamicFile; // Filename for dynamic operations
-
-    // Clear all data from ChoreManager
-    void clearAll() {
-      try {
-        // Clear original Container of chores
-        clearChores();
-        // Clear leftover Container of chores
-        //clearLeftoverChores();
-        // Clear assigned Container of chores for each chore doer
-        clearAllAssignedChores();
-        // Clear chore doers
-        clearAllChoreDoers();
-      }
-      catch (const exception& e) {
-        cerr << "Exception caught in clearChores: " << e.what() << endl;
-      }
-    }
-
-    /*
-    // Clear leftover chores from the container
-    void clearLeftoverChores() {
-      try {
-        if (!LeftoverChores.empty()) {
-          LeftoverChores.clear();
-        }
-      }
-      catch (const exception& e) {
-        cerr << "Exception caught in clearLeftoverChores: " << e.what() << endl;
-      }
-    }
-    */
-
-    // Clear all chores from the container
-    void clearChores() {
-      try {
-        if (!Chores.empty()) {
-          Chores.clear();
-        }
-      }
-      catch (const exception& e) {
-        cerr << "Exception caught in DeleteChores: " << e.what() << endl;
-      }
-    }
-
-    // Clear all chore doers from the list
-    void clearChoreDoers() {
-      try {
-        if (!ChoreDoers.empty())
-          ChoreDoers.clear();
-      }
-      catch (const exception& e) {
-        cerr << "Exception caught in clearChoreDoers: " << e.what() << endl;
-      }
-    }
-
-    // Clear all assigned chores for each chore doer
-    void clearAllAssignedChores() {
-      try {
-        if (!ChoreDoers.empty()) {
-          // Clear assigned Container of chores for each chore doer
-          for (auto& doer : ChoreDoers) {
-            if (!doer->assignedChores.empty()) {
-              doer->assignedChores.clear();
-            }
-          }
-        }
-      }
-      catch (const exception& e)
-      {
-        cerr << "Exception caught in clearAllAssignedChores: " << e.what() << endl;
-      }
-    }
-
-    // Clear all chore doers from the list
-    void clearAllChoreDoers() {
-      // Clear chore doers
-      if (!ChoreDoers.empty()) {
-        ChoreDoers.clear();
-      }
-    }
+  // Lets the user modify their username, notification preference, and theme.
+  class ProfileDialog : public wxDialog {
   public:
-    // Constructor for ChoreManager that initializes its internal state with file data
-    ChoreManager(string fileName) {
-      try {
-        dynamicFile = fileName; // Save the filename for later use
-
-        ifstream file(fileName); // Open the specified file
-        if (file.is_open()) {
-          // Parse the contents of the file into a JSON object if not empty
-          if (j.is_null()) {
-            j = json::parse(file);
-          }
-          file.close(); // Always close the file after opening
-        }
-        else {
-          cerr << "Failed to open file: " << fileName << endl; // Error message if file cannot be opened
-        }
-        client = new Client(j);
-        // Initialize client with the user profile from the JSON data
-        if (j.contains("user_profile")) {
-          if (client->getUserName() == "DefaultUser") {
-            cout << "Please enter a User Name\n";
-            string usrName;
-            getline(cin, usrName);
-            client->setUsername(usrName);
-          }
-        }
-        choreCount = 0; // Initialize the chore count
-        loadChores(); // Load chores from the JSON object
-      }
-      catch (const json::exception& e) {
-        cerr << "JSON Error: " << e.what() << endl; // Handle JSON parsing errors
-        throw; // Rethrow the exception for external handling
-      }
-      catch (const ifstream::failure& e) {
-        cerr << "File Error: " << e.what() << endl; // Handle file opening errors
-        throw;
-      }
-    }
-
-    // Destructor to clear resources
-    ~ChoreManager() {
-      clearAll();
-    }
-
-    // Method to load chores from the JSON object into the container
-    void loadChores() {
-      try {
-        if (j.contains("chores") && j["chores"].is_array()) {
-          for (auto& choreJson : j["chores"]) {
-            string difficulty = choreJson.value("difficulty", "unknown"); // Get the difficulty level from the JSON
-            shared_ptr<Chore> chore;
-            addChore(choreJson);
-            /*
-            // Create a specific type of Chore based on the difficulty level
-            if (difficulty == "easy") {
-              chore = make_shared<EasyChore>(choreJson);
-            }
-            else if (difficulty == "medium") {
-              chore = make_shared<MediumChore>(choreJson);
-            }
-            else if (difficulty == "hard") {
-              chore = make_shared<HardChore>(choreJson);
-            }
-            else {
-              cerr << "Unknown difficulty level: " << difficulty << endl;
-              continue;
-            }
-
-            // Uses the overloaded push_back method to add the chore to the container
-            Chores.push_back(chore); // Add chore to the container
-            */
-            choreCount++; // Increment the count of chores
-          }
-          saveData();
-        }
-      }
-      catch (const json::parse_error& e) {
-        cerr << "JSON parse error: " << e.what() << endl;
-      }
-      catch (const json::out_of_range& e) {
-        cerr << "JSON out of range error: " << e.what() << endl;
-      }
-      catch (const json::type_error& e) {
-        cerr << "JSON type error: " << e.what() << endl;
-      }
-      catch (const exception& e) {
-        cerr << "Standard exception: " << e.what() << endl;
-      }
-    }
-
-    // Method to modify either user profile data or chore data interactively
-    // NOT IMPLEMENTED YET
-    /*
-    void modifyData() {
-      cout << "1: Modify User Profile\n2: Modify Chores\nChoose option: \n";
-      int choice;
-      cin >> choice;
-      cin.ignore(); // clear buffer after reading number
-
-      switch (choice) {
-      case 1:
-        client->modifyProfile();
-        break;
-      case 2:
-        cout << "Enter chore index to modify: \n";
-        int index;
-        cin >> index;
-        cin.ignore();
-        if (index >= 0 && index < Chores.size()) {
-          Chores[index]->modifyChore();
-        }
-        else {
-          cout << "Invalid index!" << endl;
-        }
-        break;
-      default:
-        cout << "Invalid choice!" << endl;
-      }
-      saveData(); // Save changes to file
-    }
-    */
-    // Method to output all data including chore assignments and user profile to a file
-    void outputChoreAssignmentsToFile(const string& outputPath) {
-      // Check if the output path is empty
-      if (outputPath.empty()) {
-        cerr << "Output path is empty!" << endl;
-        return;
-      }
-
-      // Check if there are any chore doers to process
-      if (ChoreDoers.empty()) {
-        cerr << "No Chore Doers available to output!" << endl;
-        return;
-      }
-
-      // Check if there are any assigned chores to process
-      bool hasAssignedChores = false;
-      for (const auto& doer : ChoreDoers) {
-        if (!doer->assignedChores.empty()) {
-          hasAssignedChores = true;
-          break;
-        }
-      }
-
-      if (!hasAssignedChores) {
-        cerr << "No chores assigned to any Chore Doer!" << endl;
-        return;
-      }
-
-      json output;
-
-      // Include client's user profile data
-      output["user_profile"] = client->toJSON();
-
-      // Include chore assignments for each chore doer
-      output["chore_doers"] = json::array();
-      for (const auto& doer : ChoreDoers) {
-        // Prepare the JSON object for each chore doer with their name and chore count at the top
-        json doerJson = json::object({
-          {"chore_count", doer->getChoreAmount() },
-          {"name", doer->getName()},
-           // Include the count of assigned chores
-          {"chores", json::array()}  // Initialize chores array
-          });
-
-        for (const auto& chore : doer->assignedChores) {
-          doerJson["chores"].push_back(chore->toJSON());
-        }
-        output["chore_doers"].push_back(doerJson);
-      }
-
-      // Write to file with pretty formatting
-      ofstream outFile(outputPath);
-      if (!outFile.is_open()) {
-        throw runtime_error("Could not open file to write chore assignments.\n");
-      }
-      outFile << setw(4) << output; // Pretty print with indent of 4 spaces
-      outFile.close();
-    }
-
-    // Output all data to the console or to file
-    json toJSON() const {
-      json output;
-      for (const auto& chore : Chores) {
-        output["chores"].push_back(chore->toJSON());
-      }
-      if (client) {
-        output["user_profile"] = client->toJSON();
-      }
-      return output;
-    }
-
-    // saveData method to overwrite the original data.json file for chores and user data
-    void saveData() {
-      // Reset our json object because json is getting overwritten
-      j.clear();
-
-      // All data changed through class functions modify or set(attribute) or add/create chore  will be saved here
-      // Add new data to json object with updated chore list
-      j = toJSON();
-
-      // Overwrites original file
-      ofstream file(dynamicFile);
-      if (file) {
-        file << setw(4) << j << endl;
-      }
-      else {
-        cerr << "Error saving file " << dynamicFile << "\n";
-      }
-      file.close();
-    }
-
-    string displayChoreDoerList() {
-      if (ChoreDoers.empty()) {
-        return "No chore doers available.\n";
-      }
-
-      string info;
-      for (const auto& doer : ChoreDoers) {
-        info += doer->getName() + "\n";
-      }
-      return info;
-    }
-
-    string displayChoreList() {
-      if (Chores.empty()) {
-        return "No chores available.\n";
-      }
-
-      string info;
-      for (const auto& chore : Chores) {
-        info += chore->simplePrint() + "\n"; // Only returns few attributes instead of all attributes
-      }
-      return info;
-    }
-
-
-    // Returns assigned chores for a chosen chore doer
-    std::string displayAssignedChores(const std::string& doerName) {
-      auto doer = std::find_if(ChoreDoers.begin(), ChoreDoers.end(), [&doerName](shared_ptr<ChoreDoer>& d) {
-        return d->getName() == doerName;
-        });
-
-      if (doer != ChoreDoers.end()) {
-        std::string info = "Chore Doer: " + (*doer)->getName() + " has chores:\n";
-        info += (*doer)->returnAssignedChores();  // Use Container's method
-        return info;
-      }
-
-      return "Chore Doer not found.\n";
-    }
-
-    string displayAllChoresAllAttributes()
+    ProfileDialog(wxWindow* parent, Client& client)
+      : wxDialog(parent, wxID_ANY, "Modify User Profile"), client(client)
     {
-      if (Chores.empty())
-      {
-        return "No chores available.\n";
-      }
-      return Chores.displayAllItemsAllAttributes();
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+
+      wxBoxSizer* nameSizer = new wxBoxSizer(wxHORIZONTAL);
+      nameSizer->Add(new wxStaticText(this, wxID_ANY, "Username:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+      usernameCtrl = new wxTextCtrl(this, wxID_ANY, client.getUserName());
+      nameSizer->Add(usernameCtrl, 1, wxALL | wxEXPAND, 4);
+      mainSizer->Add(nameSizer, 0, wxALL | wxEXPAND, 8);
+
+      notifyCheck = new wxCheckBox(this, wxID_ANY, "Notifications Enabled");
+      notifyCheck->SetValue(client.getNotify() == "Enabled");
+      mainSizer->Add(notifyCheck, 0, wxALL, 8);
+
+      wxArrayString themes;
+      themes.Add("dark");
+      themes.Add("light");
+      themeBox = new wxRadioBox(this, wxID_ANY, "Theme", wxDefaultPosition, wxDefaultSize, themes, 1, wxRA_SPECIFY_ROWS);
+      themeBox->SetSelection(client.getTheme() == "light" ? 1 : 0);
+      mainSizer->Add(themeBox, 0, wxALL | wxEXPAND, 8);
+
+      mainSizer->Add(CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxEXPAND, 8);
+      SetSizerAndFit(mainSizer);
+
+      Bind(wxEVT_BUTTON, &ProfileDialog::OnOK, this, wxID_OK);
     }
 
-    // Returns assigned chores for all chore doers
-    string displayAllChoreAssignments() {
-      if (ChoreDoers.empty()) {
-        return "No chore doers available.\n";
+  private:
+    Client& client;
+    wxTextCtrl* usernameCtrl;
+    wxCheckBox* notifyCheck;
+    wxRadioBox* themeBox;
+
+    void OnOK(wxCommandEvent& event) {
+      string newName = usernameCtrl->GetValue().ToStdString();
+      if (newName != client.getUserName()) {
+        client.setUsername(newName);
       }
-
-      std::string info;
-      bool anyChoresAssigned = false;  // To check if any chores have been assigned at all.
-
-      for (auto& doer : ChoreDoers) {
-        auto choresInfo = doer->returnAssignedChores();
-        if (!choresInfo.empty()) {
-          anyChoresAssigned = true;
-          info += "Chore Doer: " + doer->getName() + " has chores:\n";
-          info += choresInfo;
-          info += "\n";  // Add a newline for separation between doers
-        }
-        else {
-          info += "Chore Doer: " + doer->getName() + " has no assigned chores.\n\n";
-        }
+      bool wantNotify = notifyCheck->GetValue();
+      if (wantNotify != (client.getNotify() == "Enabled")) {
+        client.toggleNotify();
       }
-
-      if (!anyChoresAssigned) {
-        return "No chores have been assigned to any chore doer.\n";
+      string wantTheme = themeBox->GetSelection() == 1 ? "light" : "dark";
+      if (wantTheme != client.getTheme()) {
+        client.toggleTheme();
       }
+      event.Skip();
+    }
+  };
 
-      return info;  // Return the complete string with all assigned chores details
+  // Full-field chore creation/editing dialog. Pass existingChore == nullptr for "New
+  // Chore" mode (calls manager.createChore()); pass a live chore for "Edit" mode
+  // (applies setters directly to that shared_ptr<Chore>, same as the rest of the app's
+  // live-reference editing convention).
+  class ChoreEditorDialog : public wxDialog {
+  public:
+    ChoreEditorDialog(wxWindow* parent, ChoreManager& manager, shared_ptr<Chore> existingChore)
+      : wxDialog(parent, wxID_ANY, existingChore ? "Edit Chore" : "New Chore", wxDefaultPosition, wxSize(480, 700)),
+      manager(manager), existingChore(existingChore)
+    {
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+      wxScrolledWindow* scroll = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxSize(440, 560), wxVSCROLL);
+      scroll->SetScrollRate(0, 10);
+      wxFlexGridSizer* grid = new wxFlexGridSizer(2, 6, 6);
+      grid->AddGrowableCol(1, 1);
+
+      auto addLabel = [&](const wxString& text) {
+        grid->Add(new wxStaticText(scroll, wxID_ANY, text), 0, wxALIGN_CENTER_VERTICAL | wxALL, 2);
+        };
+
+      addLabel("Name:");
+      nameCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? existingChore->getName() : "");
+      grid->Add(nameCtrl, 1, wxEXPAND);
+
+      addLabel("Category:");
+      wxArrayString categoryChoices;
+      for (const auto& entry : manager.getCategoryRegistry().listSorted()) categoryChoices.Add(entry.name);
+      categoryCtrl = new wxComboBox(scroll, wxID_ANY, existingChore ? existingChore->getCategory() : "Uncategorized",
+        wxDefaultPosition, wxDefaultSize, categoryChoices);
+      categoryCtrl->SetToolTip("Pick an existing category, or type a new name to create one.");
+      grid->Add(categoryCtrl, 1, wxEXPAND);
+
+      addLabel("Frequency:");
+      frequencyCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? existingChore->getFrequency() : "");
+      grid->Add(frequencyCtrl, 1, wxEXPAND);
+
+      addLabel("Estimated Time:");
+      estimatedTimeCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? existingChore->getEstimatedTime() : "");
+      grid->Add(estimatedTimeCtrl, 1, wxEXPAND);
+
+      addLabel("Earnings ($):");
+      earningsCtrl = new wxSpinCtrl(scroll, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 100000,
+        existingChore ? existingChore->getEarnings() : 0);
+      grid->Add(earningsCtrl, 1, wxEXPAND);
+
+      addLabel("Priority:");
+      wxArrayString priorities; priorities.Add("low"); priorities.Add("moderate"); priorities.Add("high");
+      priorityCtrl = new wxChoice(scroll, wxID_ANY, wxDefaultPosition, wxDefaultSize, priorities);
+      priorityCtrl->SetStringSelection(existingChore ? existingChore->toStringP(existingChore->getPriority()) : "low");
+      grid->Add(priorityCtrl, 1, wxEXPAND);
+
+      addLabel("Status:");
+      wxArrayString statuses; statuses.Add("not started"); statuses.Add("in progress"); statuses.Add("completed");
+      statusCtrl = new wxChoice(scroll, wxID_ANY, wxDefaultPosition, wxDefaultSize, statuses);
+      statusCtrl->SetStringSelection(existingChore ? existingChore->toStringS(existingChore->getStatus()) : "not started");
+      grid->Add(statusCtrl, 1, wxEXPAND);
+
+      addLabel("Location:");
+      locationCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? existingChore->getLocation() : "");
+      grid->Add(locationCtrl, 1, wxEXPAND);
+
+      addLabel("Days:");
+      daysCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? JoinCommaList(existingChore->getDays()) : "");
+      daysCtrl->SetToolTip("Comma-separated, e.g. Monday, Wednesday");
+      grid->Add(daysCtrl, 1, wxEXPAND);
+
+      addLabel("Tools Required:");
+      toolsCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? JoinCommaList(existingChore->getToolsRequired()) : "");
+      toolsCtrl->SetToolTip("Comma-separated, e.g. Mop, Bucket");
+      grid->Add(toolsCtrl, 1, wxEXPAND);
+
+      addLabel("Materials Needed:");
+      materialsCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? JoinCommaList(existingChore->getMaterialsNeeded()) : "");
+      materialsCtrl->SetToolTip("Comma-separated, e.g. Soap, Rags");
+      grid->Add(materialsCtrl, 1, wxEXPAND);
+
+      addLabel("Tags:");
+      tagsCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? JoinCommaList(existingChore->getTags()) : "");
+      tagsCtrl->SetToolTip("Comma-separated, e.g. daily, kitchen");
+      grid->Add(tagsCtrl, 1, wxEXPAND);
+
+      addLabel("Description:");
+      descCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? existingChore->getDescription() : "",
+        wxDefaultPosition, wxSize(-1, 60), wxTE_MULTILINE);
+      grid->Add(descCtrl, 1, wxEXPAND);
+
+      addLabel("Notes:");
+      notesCtrl = new wxTextCtrl(scroll, wxID_ANY, existingChore ? existingChore->getNotes() : "",
+        wxDefaultPosition, wxSize(-1, 80), wxTE_MULTILINE);
+      grid->Add(notesCtrl, 1, wxEXPAND);
+
+      scroll->SetSizer(grid);
+      scroll->FitInside();
+      mainSizer->Add(scroll, 1, wxALL | wxEXPAND, 8);
+      mainSizer->Add(CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxEXPAND, 8);
+      SetSizerAndFit(mainSizer);
+
+      Bind(wxEVT_BUTTON, &ChoreEditorDialog::OnOK, this, wxID_OK);
     }
 
-    // Method to delete a chore from the available chore list by ID
-    void deleteChoreFromAvailable(int choreId) {
-      if (Chores.empty()) {
-        cout << "No chores available to delete." << endl;
+  private:
+    ChoreManager& manager;
+    shared_ptr<Chore> existingChore;
+    wxTextCtrl* nameCtrl;
+    wxComboBox* categoryCtrl;
+    wxTextCtrl* frequencyCtrl;
+    wxTextCtrl* estimatedTimeCtrl;
+    wxSpinCtrl* earningsCtrl;
+    wxChoice* priorityCtrl;
+    wxChoice* statusCtrl;
+    wxTextCtrl* locationCtrl;
+    wxTextCtrl* daysCtrl;
+    wxTextCtrl* toolsCtrl;
+    wxTextCtrl* materialsCtrl;
+    wxTextCtrl* tagsCtrl;
+    wxTextCtrl* descCtrl;
+    wxTextCtrl* notesCtrl;
+
+    void OnOK(wxCommandEvent& event) {
+      string categoryName = categoryCtrl->GetValue().ToStdString();
+      if (categoryName.empty()) categoryName = "Uncategorized";
+
+      if (!manager.getCategoryRegistry().exists(categoryName)) {
+        int confirm = wxMessageBox("Category '" + categoryName + "' doesn't exist yet. Add it?",
+          "New Category", wxYES_NO | wxICON_QUESTION, this);
+        if (confirm != wxYES) return; // Leave the dialog open so the field can be fixed.
+        manager.createCategory(categoryName);
+      }
+
+      if (nameCtrl->GetValue().IsEmpty()) {
+        wxMessageBox("Name cannot be empty.", "Missing Name", wxOK | wxICON_WARNING, this);
         return;
       }
 
-      if (choreId < 0) {
-        cout << "Invalid chore ID provided. ID must be non-negative." << endl;
-        return;
-      }
-
-      size_t sizeBefore = Chores.size(); // Store the size before deletion
-
-      // Delegate the deletion to the Container class method
-      Chores.deleteItem(choreId);
-      choreCount--;
-      if (Chores.size() < sizeBefore) {
-        cout << "Chore with ID " << choreId << " has been successfully deleted." << endl;
+      if (existingChore) {
+        existingChore->setName(nameCtrl->GetValue().ToStdString());
+        existingChore->setDescription(descCtrl->GetValue().ToStdString());
+        existingChore->setCategory(categoryName);
+        existingChore->setFrequency(frequencyCtrl->GetValue().ToStdString());
+        existingChore->setEstimatedTime(estimatedTimeCtrl->GetValue().ToStdString());
+        existingChore->setEarnings(earningsCtrl->GetValue());
+        existingChore->setPriority(Chore::priorityFromString(priorityCtrl->GetStringSelection().ToStdString()));
+        existingChore->setStatus(Chore::statusFromString(statusCtrl->GetStringSelection().ToStdString()));
+        existingChore->setLocation(locationCtrl->GetValue().ToStdString());
+        existingChore->setDays(SplitCommaList(daysCtrl->GetValue().ToStdString()));
+        existingChore->setToolsRequired(SplitCommaList(toolsCtrl->GetValue().ToStdString()));
+        existingChore->setMaterialsNeeded(SplitCommaList(materialsCtrl->GetValue().ToStdString()));
+        existingChore->setTags(SplitCommaList(tagsCtrl->GetValue().ToStdString()));
+        existingChore->setNotes(notesCtrl->GetValue().ToStdString());
       }
       else {
-        cout << "No chore with ID " << choreId << " found in the available chores." << endl;
+        json fields;
+        fields["name"] = nameCtrl->GetValue().ToStdString();
+        fields["description"] = descCtrl->GetValue().ToStdString();
+        fields["category"] = categoryName;
+        fields["frequency"] = frequencyCtrl->GetValue().ToStdString();
+        fields["estimated_time"] = estimatedTimeCtrl->GetValue().ToStdString();
+        fields["earnings"] = earningsCtrl->GetValue();
+        fields["priority"] = priorityCtrl->GetStringSelection().ToStdString();
+        fields["status"] = statusCtrl->GetStringSelection().ToStdString();
+        fields["location"] = locationCtrl->GetValue().ToStdString();
+        fields["days"] = SplitCommaList(daysCtrl->GetValue().ToStdString());
+        fields["tools_required"] = SplitCommaList(toolsCtrl->GetValue().ToStdString());
+        fields["materials_needed"] = SplitCommaList(materialsCtrl->GetValue().ToStdString());
+        fields["tags"] = SplitCommaList(tagsCtrl->GetValue().ToStdString());
+        fields["notes"] = notesCtrl->GetValue().ToStdString();
+        manager.createChore(fields);
+      }
+
+      event.Skip();
+    }
+  };
+
+  // Lets the user pick a chore doer's avatar color and edit their notes/preferences.
+  class DoerProfileEditDialog : public wxDialog {
+  public:
+    DoerProfileEditDialog(wxWindow* parent, ChoreDoer& doer)
+      : wxDialog(parent, wxID_ANY, "Edit " + doer.getName() + "'s Profile", wxDefaultPosition, wxSize(380, 320)), doer(doer)
+    {
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+
+      wxBoxSizer* colorSizer = new wxBoxSizer(wxHORIZONTAL);
+      colorSizer->Add(new wxStaticText(this, wxID_ANY, "Avatar Color:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+      wxColour initialColor(doer.getAvatarColor().empty() ? "#4ECDC4" : doer.getAvatarColor());
+      colorPicker = new wxColourPickerCtrl(this, wxID_ANY, initialColor);
+      colorSizer->Add(colorPicker, 0, wxALL, 4);
+      mainSizer->Add(colorSizer, 0, wxALL, 8);
+
+      mainSizer->Add(new wxStaticText(this, wxID_ANY, "Notes / Preferences:"), 0, wxLEFT | wxTOP, 8);
+      notesCtrl = new wxTextCtrl(this, wxID_ANY, doer.getNotes(), wxDefaultPosition, wxSize(-1, 140), wxTE_MULTILINE);
+      mainSizer->Add(notesCtrl, 1, wxALL | wxEXPAND, 8);
+
+      mainSizer->Add(CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxEXPAND, 8);
+      SetSizerAndFit(mainSizer);
+
+      Bind(wxEVT_BUTTON, &DoerProfileEditDialog::OnOK, this, wxID_OK);
+    }
+
+  private:
+    ChoreDoer& doer;
+    wxColourPickerCtrl* colorPicker;
+    wxTextCtrl* notesCtrl;
+
+    void OnOK(wxCommandEvent& event) {
+      doer.setAvatarColor(colorPicker->GetColour().GetAsString(wxC2S_HTML_SYNTAX).ToStdString());
+      doer.setNotes(notesCtrl->GetValue().ToStdString());
+      event.Skip();
+    }
+  };
+
+  // Add/rename/delete/reorder categories.
+  class ManageCategoriesDialog : public wxDialog {
+  public:
+    ManageCategoriesDialog(wxWindow* parent, ChoreManager& manager)
+      : wxDialog(parent, wxID_ANY, "Manage Categories", wxDefaultPosition, wxSize(380, 440)), manager(manager)
+    {
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+      list = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxSize(340, 220), wxLC_REPORT | wxLC_SINGLE_SEL);
+      list->InsertColumn(0, "Category", wxLIST_FORMAT_LEFT, 220);
+      list->InsertColumn(1, "Order", wxLIST_FORMAT_LEFT, 80);
+      mainSizer->Add(list, 1, wxALL | wxEXPAND, 8);
+
+      wxBoxSizer* row1 = new wxBoxSizer(wxHORIZONTAL);
+      wxButton* addBtn = new wxButton(this, wxID_ANY, "Add");
+      wxButton* renameBtn = new wxButton(this, wxID_ANY, "Rename");
+      wxButton* deleteBtn = new wxButton(this, wxID_ANY, "Delete");
+      row1->Add(addBtn, 0, wxALL, 4);
+      row1->Add(renameBtn, 0, wxALL, 4);
+      row1->Add(deleteBtn, 0, wxALL, 4);
+      mainSizer->Add(row1, 0, wxALIGN_LEFT);
+
+      wxBoxSizer* row2 = new wxBoxSizer(wxHORIZONTAL);
+      wxButton* upBtn = new wxButton(this, wxID_ANY, "Move Up");
+      wxButton* downBtn = new wxButton(this, wxID_ANY, "Move Down");
+      row2->Add(upBtn, 0, wxALL, 4);
+      row2->Add(downBtn, 0, wxALL, 4);
+      mainSizer->Add(row2, 0, wxALIGN_LEFT);
+
+      mainSizer->Add(CreateButtonSizer(wxCLOSE), 0, wxALL | wxEXPAND, 8);
+      SetSizerAndFit(mainSizer);
+
+      RefreshList();
+
+      addBtn->Bind(wxEVT_BUTTON, &ManageCategoriesDialog::OnAdd, this);
+      renameBtn->Bind(wxEVT_BUTTON, &ManageCategoriesDialog::OnRename, this);
+      deleteBtn->Bind(wxEVT_BUTTON, &ManageCategoriesDialog::OnDelete, this);
+      upBtn->Bind(wxEVT_BUTTON, &ManageCategoriesDialog::OnMoveUp, this);
+      downBtn->Bind(wxEVT_BUTTON, &ManageCategoriesDialog::OnMoveDown, this);
+      Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CLOSE); }, wxID_CLOSE);
+    }
+
+  private:
+    ChoreManager& manager;
+    wxListCtrl* list;
+
+    void RefreshList() {
+      list->DeleteAllItems();
+      for (const auto& entry : manager.getCategoryRegistry().listSorted()) {
+        long row = list->InsertItem(list->GetItemCount(), entry.name);
+        list->SetItem(row, 1, to_string(entry.sortWeight));
       }
     }
 
-    /*
-    // Method to delete a chore from leftover chores by ID
-    void deleteLeftoverChore(int choreId) {
-      LeftoverChores.deleteItem(choreId);
+    string GetSelectedName() {
+      long sel = GetFirstSelectedItem(list);
+      if (sel == -1) return "";
+      return list->GetItemText(sel, 0).ToStdString();
     }
-    */
 
-    // NOT IMPLEMENTED IN FINAL VERSION
+    void OnAdd(wxCommandEvent&) {
+      wxString name = wxGetTextFromUser("New category name:", "Add Category", "", this);
+      if (name.IsEmpty()) return;
+      string err = manager.createCategory(name.ToStdString());
+      if (!err.empty()) wxMessageBox(err, "Add Failed", wxOK | wxICON_ERROR, this);
+      RefreshList();
+    }
 
-    // Method to delete a chore from any chore doer's assigned list by ID
-    /*
-    void deleteChoreFromAnyDoer(int choreId) {
-      if (ChoreDoers.empty())
-      {
-        cout << "No chore doers available to delete chores from." << endl;
+    void OnRename(wxCommandEvent&) {
+      string name = GetSelectedName();
+      if (name.empty()) { wxMessageBox("Select a category first.", "No Selection", wxOK | wxICON_WARNING, this); return; }
+      if (name == "Uncategorized") { wxMessageBox("'Uncategorized' cannot be renamed.", "Not Allowed", wxOK | wxICON_WARNING, this); return; }
+      wxString newName = wxGetTextFromUser("Rename category to:", "Rename Category", name, this);
+      if (newName.IsEmpty()) return;
+      string err = manager.renameCategory(name, newName.ToStdString());
+      if (!err.empty()) wxMessageBox(err, "Rename Failed", wxOK | wxICON_ERROR, this);
+      RefreshList();
+    }
+
+    void OnDelete(wxCommandEvent&) {
+      string name = GetSelectedName();
+      if (name.empty()) { wxMessageBox("Select a category first.", "No Selection", wxOK | wxICON_WARNING, this); return; }
+      int confirm = wxMessageBox("Delete category '" + name + "'?", "Confirm Delete", wxYES_NO | wxICON_WARNING, this);
+      if (confirm != wxYES) return;
+      string err = manager.deleteCategory(name);
+      if (!err.empty()) wxMessageBox(err, "Delete Failed", wxOK | wxICON_ERROR, this);
+      RefreshList();
+    }
+
+    void OnMoveUp(wxCommandEvent&) {
+      string name = GetSelectedName();
+      if (!name.empty()) manager.moveCategoryUp(name);
+      RefreshList();
+    }
+
+    void OnMoveDown(wxCommandEvent&) {
+      string name = GetSelectedName();
+      if (!name.empty()) manager.moveCategoryDown(name);
+      RefreshList();
+    }
+  };
+
+  // Shown at startup when there's more than one household and no unambiguous choice,
+  // and reused for the "Switch Household..." menu action.
+  class HouseholdPickerDialog : public wxDialog {
+  public:
+    HouseholdPickerDialog(wxWindow* parent, HouseholdRegistry& registry, const string& currentPath)
+      : wxDialog(parent, wxID_ANY, "Choose a Household", wxDefaultPosition, wxSize(360, 320))
+    {
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+      mainSizer->Add(new wxStaticText(this, wxID_ANY, "Select a household to open:"), 0, wxALL, 8);
+
+      list = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxSize(320, 200), wxLC_REPORT | wxLC_SINGLE_SEL);
+      list->InsertColumn(0, "Household", wxLIST_FORMAT_LEFT, 300);
+
+      const auto& households = registry.listHouseholds();
+      long selectRow = 0;
+      for (size_t i = 0; i < households.size(); i++) {
+        long row = list->InsertItem(list->GetItemCount(), households[i].displayName);
+        paths.push_back(households[i].filePath);
+        if (households[i].filePath == currentPath) selectRow = row;
+      }
+      if (!households.empty()) {
+        list->SetItemState(selectRow, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED);
+      }
+      mainSizer->Add(list, 1, wxALL | wxEXPAND, 8);
+
+      mainSizer->Add(CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxEXPAND, 8);
+      SetSizerAndFit(mainSizer);
+    }
+
+    string GetSelectedPath() const {
+      long sel = GetFirstSelectedItem(list);
+      if (sel == -1 || (size_t)sel >= paths.size()) return "";
+      return paths[sel];
+    }
+
+  private:
+    wxListCtrl* list;
+    vector<string> paths;
+  };
+
+  // Rename/delete households. Renaming the currently-open household routes through the
+  // live ChoreManager (it holds the in-memory copy); renaming any other goes straight
+  // to its file. Deleting the currently-open household is blocked.
+  class ManageHouseholdsDialog : public wxDialog {
+  public:
+    ManageHouseholdsDialog(wxWindow* parent, HouseholdRegistry& registry, ChoreManager& activeManager)
+      : wxDialog(parent, wxID_ANY, "Manage Households", wxDefaultPosition, wxSize(420, 400)),
+      registry(registry), activeManager(activeManager)
+    {
+      wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+      list = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxSize(380, 250), wxLC_REPORT | wxLC_SINGLE_SEL);
+      list->InsertColumn(0, "Household", wxLIST_FORMAT_LEFT, 360);
+      mainSizer->Add(list, 1, wxALL | wxEXPAND, 8);
+
+      wxBoxSizer* btnSizer = new wxBoxSizer(wxHORIZONTAL);
+      wxButton* renameBtn = new wxButton(this, wxID_ANY, "Rename");
+      wxButton* deleteBtn = new wxButton(this, wxID_ANY, "Delete");
+      btnSizer->Add(renameBtn, 0, wxALL, 4);
+      btnSizer->Add(deleteBtn, 0, wxALL, 4);
+      mainSizer->Add(btnSizer, 0, wxALIGN_LEFT);
+
+      mainSizer->Add(CreateButtonSizer(wxCLOSE), 0, wxALL | wxEXPAND, 8);
+      SetSizerAndFit(mainSizer);
+
+      RefreshList();
+
+      renameBtn->Bind(wxEVT_BUTTON, &ManageHouseholdsDialog::OnRename, this);
+      deleteBtn->Bind(wxEVT_BUTTON, &ManageHouseholdsDialog::OnDelete, this);
+      Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CLOSE); }, wxID_CLOSE);
+    }
+
+  private:
+    HouseholdRegistry& registry;
+    ChoreManager& activeManager;
+    wxListCtrl* list;
+
+    void RefreshList() {
+      list->DeleteAllItems();
+      for (const auto& h : registry.listHouseholds()) {
+        wxString label = h.displayName;
+        if (h.filePath == registry.getLastOpenHouseholdPath()) label += " (current)";
+        list->InsertItem(list->GetItemCount(), label);
+      }
+    }
+
+    void OnRename(wxCommandEvent&) {
+      long sel = GetFirstSelectedItem(list);
+      const auto& households = registry.listHouseholds();
+      if (sel == -1 || (size_t)sel >= households.size()) {
+        wxMessageBox("Select a household first.", "No Selection", wxOK | wxICON_WARNING, this);
         return;
       }
-      for (auto& doer : ChoreDoers) {
-        doer->assignedChores.deleteItem(choreId);
+      string path = households[sel].filePath;
+      wxString newName = wxGetTextFromUser("New household name:", "Rename Household", households[sel].displayName, this);
+      if (newName.IsEmpty()) return;
+
+      if (path == registry.getLastOpenHouseholdPath()) {
+        activeManager.setHouseholdName(newName.ToStdString());
+        activeManager.saveData();
+      }
+      string err = registry.renameHousehold(path, newName.ToStdString());
+      if (!err.empty()) {
+        wxMessageBox(err, "Rename Failed", wxOK | wxICON_ERROR, this);
+      }
+      RefreshList();
+    }
+
+    void OnDelete(wxCommandEvent&) {
+      long sel = GetFirstSelectedItem(list);
+      const auto& households = registry.listHouseholds();
+      if (sel == -1 || (size_t)sel >= households.size()) {
+        wxMessageBox("Select a household first.", "No Selection", wxOK | wxICON_WARNING, this);
+        return;
+      }
+      string path = households[sel].filePath;
+      string name = households[sel].displayName;
+
+      if (path == registry.getLastOpenHouseholdPath()) {
+        wxMessageBox("Cannot delete the currently open household — switch to another one first.",
+          "Delete Blocked", wxOK | wxICON_WARNING, this);
+        return;
+      }
+      int confirm = wxMessageBox("Delete household '" + name + "'? This cannot be undone.",
+        "Confirm Delete", wxYES_NO | wxICON_WARNING, this);
+      if (confirm != wxYES) return;
+      string err = registry.deleteHousehold(path);
+      if (!err.empty()) {
+        wxMessageBox(err, "Delete Failed", wxOK | wxICON_ERROR, this);
+      }
+      RefreshList();
+    }
+  };
+
+  // Menu/control IDs. The Sort/SortAll/Doer-sort groups are each a contiguous range
+  // so a single Bind() can dispatch the whole group via event.GetId().
+  enum {
+    ID_OUTPUT_FILE = wxID_HIGHEST + 1,
+    ID_SAVE,
+    ID_ASSIGN_RANDOM,
+    ID_NEW_CHORE,
+    ID_DELETE_CHORE,
+    ID_SEARCH,
+    ID_COMPARE,
+    ID_SORT_ID,
+    ID_SORT_NAME,
+    ID_SORT_EARNINGS,
+    ID_SORT_CATEGORY,
+    ID_SORT_DESC,
+    ID_VIEW_DETAILS,
+    ID_MANAGE_CATEGORIES,
+    ID_ADD_DOER,
+    ID_DELETE_DOER,
+    ID_VIEW_ASSIGNMENTS,
+    ID_SORTALL_ID,
+    ID_SORTALL_NAME,
+    ID_SORTALL_EARNINGS,
+    ID_SORTALL_CATEGORY,
+    ID_MODIFY_PROFILE,
+    ID_DOER_SORT_ID,
+    ID_DOER_SORT_NAME,
+    ID_DOER_SORT_EARNINGS,
+    ID_DOER_SORT_CATEGORY,
+    ID_SWITCH_HOUSEHOLD,
+    ID_NEW_HOUSEHOLD,
+    ID_MANAGE_HOUSEHOLDS,
+    ID_EDIT_DOER_PROFILE,
+    ID_PREV_DAY,
+    ID_NEXT_DAY,
+    ID_TODAY_DAY,
+  };
+
+  class MainFrame : public wxFrame {
+  public:
+    MainFrame(unique_ptr<ChoreManager> mgr, HouseholdRegistry& hReg)
+      : wxFrame(nullptr, wxID_ANY, "Chore Manager", wxDefaultPosition, wxSize(950, 680)),
+      manager(std::move(mgr)), householdRegistry(hReg)
+    {
+      currentHistoryDate = TodayDateString();
+
+      // A slightly larger, bold-friendly system font, set before building any child
+      // controls so they inherit it at creation time (wx children pick up the parent's
+      // font when they're constructed, not dynamically afterward).
+      wxFont friendlyFont(11, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL, false, "Segoe UI");
+      SetFont(friendlyFont);
+
+      BuildMenuBar();
+      BuildToolBar();
+
+      wxPanel* panel = new wxPanel(this);
+      wxBoxSizer* rootSizer = new wxBoxSizer(wxVERTICAL);
+      notebook = new wxNotebook(panel, wxID_ANY);
+
+      BuildChoresTab();
+      BuildChoreDoersTab();
+      BuildHistoryTab();
+
+      rootSizer->Add(notebook, 1, wxEXPAND | wxALL, 4);
+      panel->SetSizer(rootSizer);
+
+      CreateStatusBar();
+      UpdateTitle();
+
+      RefreshChoresList();
+      RefreshChoreDoersList();
+      RefreshHistoryList();
+
+      // If this is a brand-new profile, prompt for a username right away via the same
+      // dialog used for later edits, instead of the old console's blocking cin prompt.
+      if (manager->getClient().getUserName() == "DefaultUser") {
+        ProfileDialog dlg(this, manager->getClient());
+        if (dlg.ShowModal() == wxID_OK) {
+          manager->saveData();
+        }
       }
     }
-    */
 
-    // Method to add a new chore doer to the system
-    void addChoreDoer(const string& name) {
-      ChoreDoers.push_back(make_shared<ChoreDoer>(name));
+  private:
+    unique_ptr<ChoreManager> manager;
+    HouseholdRegistry& householdRegistry;
+    wxNotebook* notebook;
+    wxListCtrl* choresList;
+    wxTextCtrl* choreDetailText;
+
+    // Chore Doers tab: a scrollable column of doer "cards" (master) plus a profile
+    // panel (detail) for whichever one is selected.
+    wxScrolledWindow* doerCardsScroll;
+    wxBoxSizer* doerCardsSizer;
+    vector<DoerCardPanel*> doerCards;
+    wxPanel* doerProfilePanel;
+    AvatarCircle* profileAvatar;
+    wxStaticText* profileNameText;
+    wxStaticText* profileStreakText;
+    wxStaticText* profileEarningsText;
+    wxTextCtrl* profileNotesText;
+    wxListCtrl* doerChoresList;
+    RoundedButton* startBtn;
+    RoundedButton* completeBtn;
+    RoundedButton* resetBtn;
+    wxString selectedDoerName;
+
+    // History tab
+    wxListCtrl* historyList;
+    wxStaticText* historyDateLabel;
+    string currentHistoryDate;
+
+    void UpdateTitle() {
+      SetTitle("Chore Manager — " + manager->getHouseholdName());
     }
 
-    // Method to delete a chore doer from the system by name
-    void deleteChoreDoer(const string& name) {
-      try {
-        int index = 0;  // Start index from 0
-        bool found = false;  // Flag to check if chore doer is found
+    void BuildMenuBar() {
+      wxMenuBar* menuBar = new wxMenuBar();
 
-        for (const auto& doer : ChoreDoers) {  // Use range-based for loop to access elements
-          if (doer->getName() == name) {
-            ChoreDoers.deleteItem(index);  // Remove the chore doer at the found index
-            cout << "Chore doer named " << name << " has been deleted.\n";
-            found = true;
-            break;  // Exit loop after removing the chore doer
-          }
-          index++;  // Increment index for each iteration
+      wxMenu* fileMenu = new wxMenu();
+      fileMenu->Append(ID_OUTPUT_FILE, "Output Chore Assignments to File...");
+      fileMenu->Append(ID_SAVE, "Save");
+      fileMenu->AppendSeparator();
+      fileMenu->Append(wxID_EXIT, "Exit");
+      menuBar->Append(fileMenu, "&File");
+
+      wxMenu* choresMenu = new wxMenu();
+      choresMenu->Append(ID_NEW_CHORE, "New Chore...");
+      choresMenu->Append(ID_ASSIGN_RANDOM, "Assign Chores Randomly");
+      choresMenu->Append(ID_DELETE_CHORE, "Delete Selected Chore");
+      choresMenu->Append(ID_SEARCH, "Search...");
+      choresMenu->Append(ID_COMPARE, "Compare Two Chores...");
+      wxMenu* sortMenu = new wxMenu();
+      sortMenu->Append(ID_SORT_ID, "By ID");
+      sortMenu->Append(ID_SORT_NAME, "By Name");
+      sortMenu->Append(ID_SORT_EARNINGS, "By Earnings");
+      sortMenu->Append(ID_SORT_CATEGORY, "By Category");
+      sortMenu->AppendSeparator();
+      sortMenu->AppendCheckItem(ID_SORT_DESC, "Descending");
+      choresMenu->AppendSubMenu(sortMenu, "Sort");
+      choresMenu->Append(ID_VIEW_DETAILS, "View Full Details...");
+      choresMenu->Append(ID_MANAGE_CATEGORIES, "Manage Categories...");
+      menuBar->Append(choresMenu, "&Chores");
+
+      wxMenu* doersMenu = new wxMenu();
+      doersMenu->Append(ID_ADD_DOER, "Add Chore Doer...");
+      doersMenu->Append(ID_DELETE_DOER, "Delete Selected Chore Doer");
+      doersMenu->Append(ID_EDIT_DOER_PROFILE, "Edit Selected Doer's Profile...");
+      doersMenu->Append(ID_VIEW_ASSIGNMENTS, "View All Assignments...");
+      wxMenu* sortAllMenu = new wxMenu();
+      sortAllMenu->Append(ID_SORTALL_ID, "By ID");
+      sortAllMenu->Append(ID_SORTALL_NAME, "By Name");
+      sortAllMenu->Append(ID_SORTALL_EARNINGS, "By Earnings");
+      sortAllMenu->Append(ID_SORTALL_CATEGORY, "By Category");
+      doersMenu->AppendSubMenu(sortAllMenu, "Sort All Doers' Chores");
+      menuBar->Append(doersMenu, "Chore &Doers");
+
+      wxMenu* householdMenu = new wxMenu();
+      householdMenu->Append(ID_SWITCH_HOUSEHOLD, "Switch Household...");
+      householdMenu->Append(ID_NEW_HOUSEHOLD, "New Household...");
+      householdMenu->Append(ID_MANAGE_HOUSEHOLDS, "Manage Households...");
+      menuBar->Append(householdMenu, "&Household");
+
+      wxMenu* profileMenu = new wxMenu();
+      profileMenu->Append(ID_MODIFY_PROFILE, "Modify Profile...");
+      menuBar->Append(profileMenu, "&Profile");
+
+      SetMenuBar(menuBar);
+
+      Bind(wxEVT_MENU, &MainFrame::OnOutputToFile, this, ID_OUTPUT_FILE);
+      Bind(wxEVT_MENU, &MainFrame::OnSave, this, ID_SAVE);
+      Bind(wxEVT_MENU, &MainFrame::OnExit, this, wxID_EXIT);
+      Bind(wxEVT_MENU, &MainFrame::OnNewChore, this, ID_NEW_CHORE);
+      Bind(wxEVT_MENU, &MainFrame::OnAssignRandom, this, ID_ASSIGN_RANDOM);
+      Bind(wxEVT_MENU, &MainFrame::OnDeleteChore, this, ID_DELETE_CHORE);
+      Bind(wxEVT_MENU, &MainFrame::OnSearch, this, ID_SEARCH);
+      Bind(wxEVT_MENU, &MainFrame::OnCompare, this, ID_COMPARE);
+      Bind(wxEVT_MENU, &MainFrame::OnSortChores, this, ID_SORT_ID, ID_SORT_CATEGORY);
+      Bind(wxEVT_MENU, &MainFrame::OnViewDetails, this, ID_VIEW_DETAILS);
+      Bind(wxEVT_MENU, &MainFrame::OnManageCategories, this, ID_MANAGE_CATEGORIES);
+      Bind(wxEVT_MENU, &MainFrame::OnAddChoreDoer, this, ID_ADD_DOER);
+      Bind(wxEVT_MENU, &MainFrame::OnDeleteChoreDoer, this, ID_DELETE_DOER);
+      Bind(wxEVT_MENU, &MainFrame::OnEditDoerProfile, this, ID_EDIT_DOER_PROFILE);
+      Bind(wxEVT_MENU, &MainFrame::OnViewAssignments, this, ID_VIEW_ASSIGNMENTS);
+      Bind(wxEVT_MENU, &MainFrame::OnSortAllDoers, this, ID_SORTALL_ID, ID_SORTALL_CATEGORY);
+      Bind(wxEVT_MENU, &MainFrame::OnSwitchHousehold, this, ID_SWITCH_HOUSEHOLD);
+      Bind(wxEVT_MENU, &MainFrame::OnNewHousehold, this, ID_NEW_HOUSEHOLD);
+      Bind(wxEVT_MENU, &MainFrame::OnManageHouseholds, this, ID_MANAGE_HOUSEHOLDS);
+      Bind(wxEVT_MENU, &MainFrame::OnModifyProfile, this, ID_MODIFY_PROFILE);
+    }
+
+    void BuildToolBar() {
+      wxToolBar* toolbar = CreateToolBar();
+      toolbar->AddTool(ID_NEW_CHORE, "New Chore", wxArtProvider::GetBitmap(wxART_NEW, wxART_TOOLBAR));
+      toolbar->AddTool(ID_DELETE_CHORE, "Delete", wxArtProvider::GetBitmap(wxART_DELETE, wxART_TOOLBAR));
+      toolbar->AddTool(ID_SAVE, "Save", wxArtProvider::GetBitmap(wxART_FILE_SAVE, wxART_TOOLBAR));
+      toolbar->AddTool(ID_SEARCH, "Search", wxArtProvider::GetBitmap(wxART_FIND, wxART_TOOLBAR));
+      toolbar->Realize();
+
+      Bind(wxEVT_TOOL, &MainFrame::OnNewChore, this, ID_NEW_CHORE);
+      Bind(wxEVT_TOOL, &MainFrame::OnDeleteChore, this, ID_DELETE_CHORE);
+      Bind(wxEVT_TOOL, &MainFrame::OnSave, this, ID_SAVE);
+      Bind(wxEVT_TOOL, &MainFrame::OnSearch, this, ID_SEARCH);
+    }
+
+    void BuildChoresTab() {
+      wxPanel* choresPanel = new wxPanel(notebook);
+      choresPanel->SetBackgroundColour(wxColour(255, 250, 240));
+      wxBoxSizer* choresSizer = new wxBoxSizer(wxVERTICAL);
+
+      choresList = new wxListCtrl(choresPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
+      choresList->InsertColumn(0, "ID", wxLIST_FORMAT_LEFT, 40);
+      choresList->InsertColumn(1, "Name", wxLIST_FORMAT_LEFT, 160);
+      choresList->InsertColumn(2, "Category", wxLIST_FORMAT_LEFT, 100);
+      choresList->InsertColumn(3, "Earnings", wxLIST_FORMAT_LEFT, 70);
+      choresList->InsertColumn(4, "Status", wxLIST_FORMAT_LEFT, 100);
+      choresList->InsertColumn(5, "Priority", wxLIST_FORMAT_LEFT, 80);
+      choresList->InsertColumn(6, "Frequency", wxLIST_FORMAT_LEFT, 100);
+      choresSizer->Add(choresList, 2, wxALL | wxEXPAND, 4);
+
+      choreDetailText = new wxTextCtrl(choresPanel, wxID_ANY, "", wxDefaultPosition, wxSize(-1, 120), wxTE_MULTILINE | wxTE_READONLY);
+      choresSizer->Add(choreDetailText, 1, wxALL | wxEXPAND, 4);
+
+      wxBoxSizer* choreBtnSizer = new wxBoxSizer(wxHORIZONTAL);
+      RoundedButton* newChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "New Chore", wxColour(0, 184, 148));
+      RoundedButton* deleteChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "Delete Selected", wxColour(255, 107, 107));
+      RoundedButton* modifyChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "Modify Selected", wxColour(108, 92, 231));
+      choreBtnSizer->Add(newChoreBtn, 0, wxALL, 4);
+      choreBtnSizer->Add(deleteChoreBtn, 0, wxALL, 4);
+      choreBtnSizer->Add(modifyChoreBtn, 0, wxALL, 4);
+      choresSizer->Add(choreBtnSizer, 0, wxALIGN_LEFT);
+
+      choresPanel->SetSizer(choresSizer);
+      notebook->AddPage(choresPanel, "Chores");
+
+      choresList->Bind(wxEVT_LIST_ITEM_SELECTED, &MainFrame::OnChoreSelected, this);
+      newChoreBtn->Bind(wxEVT_BUTTON, &MainFrame::OnNewChore, this);
+      deleteChoreBtn->Bind(wxEVT_BUTTON, &MainFrame::OnDeleteChore, this);
+      modifyChoreBtn->Bind(wxEVT_BUTTON, &MainFrame::OnModifyChore, this);
+    }
+
+    void BuildChoreDoersTab() {
+      wxPanel* doersPanel = new wxPanel(notebook);
+      doersPanel->SetBackgroundColour(wxColour(255, 250, 240));
+      wxBoxSizer* rootSizer = new wxBoxSizer(wxHORIZONTAL);
+
+      // Left: scrollable column of doer cards + Add/Delete/Edit-Profile actions.
+      wxBoxSizer* leftSizer = new wxBoxSizer(wxVERTICAL);
+      doerCardsScroll = new wxScrolledWindow(doersPanel, wxID_ANY, wxDefaultPosition, wxSize(280, -1), wxVSCROLL | wxBORDER_NONE);
+      doerCardsScroll->SetBackgroundColour(doersPanel->GetBackgroundColour());
+      doerCardsScroll->SetScrollRate(0, 10);
+      doerCardsSizer = new wxBoxSizer(wxVERTICAL);
+      doerCardsScroll->SetSizer(doerCardsSizer);
+      leftSizer->Add(doerCardsScroll, 1, wxALL | wxEXPAND, 4);
+
+      wxBoxSizer* doerBtnSizer = new wxBoxSizer(wxHORIZONTAL);
+      RoundedButton* addDoerBtn = new RoundedButton(doersPanel, wxID_ANY, "Add", wxColour(0, 184, 148), wxSize(70, 32));
+      RoundedButton* deleteDoerBtn = new RoundedButton(doersPanel, wxID_ANY, "Delete", wxColour(255, 107, 107), wxSize(70, 32));
+      RoundedButton* editProfileBtn = new RoundedButton(doersPanel, wxID_ANY, "Edit", wxColour(108, 92, 231), wxSize(70, 32));
+      doerBtnSizer->Add(addDoerBtn, 0, wxALL, 4);
+      doerBtnSizer->Add(deleteDoerBtn, 0, wxALL, 4);
+      doerBtnSizer->Add(editProfileBtn, 0, wxALL, 4);
+      leftSizer->Add(doerBtnSizer, 0, wxALIGN_LEFT | wxLEFT, 4);
+      rootSizer->Add(leftSizer, 0, wxEXPAND);
+
+      // Right: profile panel for the selected doer + their assigned chores.
+      doerProfilePanel = new wxPanel(doersPanel);
+      doerProfilePanel->SetBackgroundColour(doersPanel->GetBackgroundColour());
+      wxBoxSizer* profileSizer = new wxBoxSizer(wxVERTICAL);
+
+      wxBoxSizer* headerSizer = new wxBoxSizer(wxHORIZONTAL);
+      profileAvatar = new AvatarCircle(doerProfilePanel, wxID_ANY, wxColour(200, 200, 200), "?", wxSize(72, 72));
+      headerSizer->Add(profileAvatar, 0, wxALL | wxALIGN_CENTER_VERTICAL, 8);
+
+      wxBoxSizer* headerTextSizer = new wxBoxSizer(wxVERTICAL);
+      profileNameText = new wxStaticText(doerProfilePanel, wxID_ANY, "Select a chore doer");
+      wxFont nameFont = profileNameText->GetFont();
+      nameFont.SetPointSize(nameFont.GetPointSize() + 4);
+      nameFont.SetWeight(wxFONTWEIGHT_BOLD);
+      profileNameText->SetFont(nameFont);
+      headerTextSizer->Add(profileNameText);
+      profileStreakText = new wxStaticText(doerProfilePanel, wxID_ANY, "");
+      headerTextSizer->Add(profileStreakText);
+      profileEarningsText = new wxStaticText(doerProfilePanel, wxID_ANY, "");
+      headerTextSizer->Add(profileEarningsText);
+      headerSizer->Add(headerTextSizer, 1, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+      profileSizer->Add(headerSizer, 0, wxEXPAND);
+
+      profileSizer->Add(new wxStaticText(doerProfilePanel, wxID_ANY, "Notes:"), 0, wxLEFT | wxTOP, 8);
+      profileNotesText = new wxTextCtrl(doerProfilePanel, wxID_ANY, "", wxDefaultPosition, wxSize(-1, 60), wxTE_MULTILINE | wxTE_READONLY);
+      profileSizer->Add(profileNotesText, 0, wxALL | wxEXPAND, 8);
+
+      doerChoresList = new wxListCtrl(doerProfilePanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
+      doerChoresList->InsertColumn(0, "ID", wxLIST_FORMAT_LEFT, 40);
+      doerChoresList->InsertColumn(1, "Name", wxLIST_FORMAT_LEFT, 200);
+      doerChoresList->InsertColumn(2, "Earnings", wxLIST_FORMAT_LEFT, 70);
+      doerChoresList->InsertColumn(3, "Status", wxLIST_FORMAT_LEFT, 100);
+      profileSizer->Add(doerChoresList, 1, wxALL | wxEXPAND, 8);
+
+      wxBoxSizer* actionBtnSizer = new wxBoxSizer(wxHORIZONTAL);
+      startBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Start", wxColour(84, 160, 255), wxSize(90, 34));
+      completeBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Complete", wxColour(0, 184, 148), wxSize(90, 34));
+      resetBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Reset", wxColour(255, 159, 28), wxSize(90, 34));
+      startBtn->Disable();
+      completeBtn->Disable();
+      resetBtn->Disable();
+      actionBtnSizer->Add(startBtn, 0, wxALL, 4);
+      actionBtnSizer->Add(completeBtn, 0, wxALL, 4);
+      actionBtnSizer->Add(resetBtn, 0, wxALL, 4);
+      profileSizer->Add(actionBtnSizer, 0, wxALIGN_LEFT | wxLEFT, 4);
+
+      doerProfilePanel->SetSizer(profileSizer);
+      rootSizer->Add(doerProfilePanel, 1, wxEXPAND | wxALL, 4);
+
+      doersPanel->SetSizer(rootSizer);
+      notebook->AddPage(doersPanel, "Chore Doers");
+
+      doerCardsScroll->Bind(wxEVT_CONTEXT_MENU, &MainFrame::OnDoerContextMenu, this);
+      Bind(EVT_DOER_CARD_SELECTED, &MainFrame::OnDoerCardSelected, this);
+      doerChoresList->Bind(wxEVT_LIST_ITEM_SELECTED, &MainFrame::OnDoerChoreSelectionChanged, this);
+      doerChoresList->Bind(wxEVT_LIST_ITEM_DESELECTED, &MainFrame::OnDoerChoreSelectionChanged, this);
+      addDoerBtn->Bind(wxEVT_BUTTON, &MainFrame::OnAddChoreDoer, this);
+      deleteDoerBtn->Bind(wxEVT_BUTTON, &MainFrame::OnDeleteChoreDoer, this);
+      editProfileBtn->Bind(wxEVT_BUTTON, &MainFrame::OnEditDoerProfile, this);
+      startBtn->Bind(wxEVT_BUTTON, &MainFrame::OnStartChore, this);
+      completeBtn->Bind(wxEVT_BUTTON, &MainFrame::OnCompleteChore, this);
+      resetBtn->Bind(wxEVT_BUTTON, &MainFrame::OnResetChore, this);
+    }
+
+    void BuildHistoryTab() {
+      wxPanel* historyPanel = new wxPanel(notebook);
+      historyPanel->SetBackgroundColour(wxColour(255, 250, 240));
+      wxBoxSizer* historySizer = new wxBoxSizer(wxVERTICAL);
+
+      wxBoxSizer* navSizer = new wxBoxSizer(wxHORIZONTAL);
+      RoundedButton* prevBtn = new RoundedButton(historyPanel, ID_PREV_DAY, "< Prev Day", wxColour(84, 160, 255), wxSize(110, 32));
+      RoundedButton* todayBtn = new RoundedButton(historyPanel, ID_TODAY_DAY, "Today", wxColour(0, 184, 148), wxSize(80, 32));
+      RoundedButton* nextBtn = new RoundedButton(historyPanel, ID_NEXT_DAY, "Next Day >", wxColour(84, 160, 255), wxSize(110, 32));
+      navSizer->Add(prevBtn, 0, wxALL, 4);
+      navSizer->Add(todayBtn, 0, wxALL, 4);
+      navSizer->Add(nextBtn, 0, wxALL, 4);
+      historyDateLabel = new wxStaticText(historyPanel, wxID_ANY, "");
+      wxFont dateFont = historyDateLabel->GetFont();
+      dateFont.SetPointSize(dateFont.GetPointSize() + 3);
+      dateFont.SetWeight(wxFONTWEIGHT_BOLD);
+      historyDateLabel->SetFont(dateFont);
+      navSizer->Add(historyDateLabel, 0, wxALIGN_CENTER_VERTICAL | wxALL, 8);
+      historySizer->Add(navSizer, 0, wxALIGN_LEFT);
+
+      historyList = new wxListCtrl(historyPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
+      historyList->InsertColumn(0, "Time", wxLIST_FORMAT_LEFT, 90);
+      historyList->InsertColumn(1, "Doer", wxLIST_FORMAT_LEFT, 140);
+      historyList->InsertColumn(2, "Action", wxLIST_FORMAT_LEFT, 100);
+      historyList->InsertColumn(3, "Chore", wxLIST_FORMAT_LEFT, 200);
+      historyList->InsertColumn(4, "Earnings", wxLIST_FORMAT_LEFT, 80);
+      historySizer->Add(historyList, 1, wxALL | wxEXPAND, 4);
+
+      historyPanel->SetSizer(historySizer);
+      notebook->AddPage(historyPanel, "History");
+
+      prevBtn->Bind(wxEVT_BUTTON, &MainFrame::OnPrevDay, this);
+      todayBtn->Bind(wxEVT_BUTTON, &MainFrame::OnToday, this);
+      nextBtn->Bind(wxEVT_BUTTON, &MainFrame::OnNextDay, this);
+    }
+
+    void RefreshHistoryList() {
+      historyDateLabel->SetLabel(FormatDateForDisplay(currentHistoryDate));
+      historyList->DeleteAllItems();
+      auto events = manager->getEventsForDate(currentHistoryDate);
+      for (const auto& event : events) {
+        // timestamp is "YYYY-MM-DD HH:MM:SS" — show just the time portion.
+        wxString time = event.timestamp.size() >= 19 ? wxString(event.timestamp.substr(11, 8)) : wxString(event.timestamp);
+        long row = historyList->InsertItem(historyList->GetItemCount(), time);
+        historyList->SetItem(row, 1, event.doerName);
+        historyList->SetItem(row, 2, event.action);
+        historyList->SetItem(row, 3, event.choreName);
+        historyList->SetItem(row, 4, "$" + to_string(event.earnings));
+      }
+    }
+
+    void OnPrevDay(wxCommandEvent&) {
+      currentHistoryDate = AddDaysToDateString(currentHistoryDate, -1);
+      RefreshHistoryList();
+    }
+
+    void OnNextDay(wxCommandEvent&) {
+      currentHistoryDate = AddDaysToDateString(currentHistoryDate, 1);
+      RefreshHistoryList();
+    }
+
+    void OnToday(wxCommandEvent&) {
+      currentHistoryDate = TodayDateString();
+      RefreshHistoryList();
+    }
+
+    void RefreshChoresList() {
+      long selectedId = -1;
+      long sel = GetFirstSelectedItem(choresList);
+      if (sel != -1) selectedId = (long)choresList->GetItemData(sel);
+
+      choresList->DeleteAllItems();
+      for (const auto& chore : manager->getChores().item()) {
+        long row = choresList->InsertItem(choresList->GetItemCount(), to_string(chore->getId()));
+        choresList->SetItem(row, 1, chore->getName());
+        choresList->SetItem(row, 2, chore->getCategory());
+        choresList->SetItem(row, 3, to_string(chore->getEarnings()));
+        choresList->SetItem(row, 4, chore->toStringS(chore->getStatus()));
+        choresList->SetItem(row, 5, chore->toStringP(chore->getPriority()));
+        choresList->SetItem(row, 6, chore->getFrequency());
+        choresList->SetItemData(row, chore->getId());
+        if (chore->getId() == selectedId) {
+          choresList->SetItemState(row, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED);
         }
+      }
+    }
 
-        if (!found) {  // Check if the chore doer was found and removed
-          cerr << "ChoreDoer named '" << name << "' not found.\n" << endl;
+    // Rebuilds the doer cards from scratch (mirrors the DeleteAllItems()-then-repopulate
+    // idiom used for the native lists elsewhere in this file). The selected card's
+    // highlight is explicitly re-applied by name after rebuild — otherwise it would
+    // visibly flicker away after almost every action, since nearly every button click
+    // triggers a save-and-refresh.
+    void RefreshChoreDoersList() {
+      doerCardsSizer->Clear(true); // true = also destroy the child windows
+      doerCards.clear();
+
+      for (const auto& doer : manager->getChoreDoers().item()) {
+        wxColour avatarColor(doer->getAvatarColor().empty() ? "#4ECDC4" : doer->getAvatarColor());
+        wxString streakText = wxString::Format("%d-day streak", manager->getDoerStreak(doer->getId()));
+        wxString earningsText = wxString::Format("$%d earned", doer->getTotalEarnings());
+        DoerCardPanel* card = new DoerCardPanel(doerCardsScroll, wxID_ANY, doer->getName(), avatarColor, streakText, earningsText);
+        card->SetSelected(doer->getName() == selectedDoerName.ToStdString());
+        doerCardsSizer->Add(card, 0, wxALL | wxEXPAND, 4);
+        doerCards.push_back(card);
+      }
+      doerCardsScroll->FitInside();
+      doerCardsScroll->Layout();
+
+      if (!selectedDoerName.IsEmpty() && manager->findChoreDoerByName(selectedDoerName.ToStdString())) {
+        RefreshDoerProfilePanel(selectedDoerName);
+      }
+      else {
+        selectedDoerName.Clear();
+        RefreshDoerProfilePanel(selectedDoerName);
+      }
+    }
+
+    // Updates the profile panel (avatar/name/streak/earnings/notes) and the assigned-
+    // chores sub-list for whichever doer is currently selected; clears it when none is.
+    void RefreshDoerProfilePanel(const wxString& doerName) {
+      auto doer = doerName.IsEmpty() ? nullptr : manager->findChoreDoerByName(doerName.ToStdString());
+      if (!doer) {
+        profileAvatar->SetAvatarColor(wxColour(200, 200, 200));
+        profileAvatar->SetInitial("?");
+        profileNameText->SetLabel("Select a chore doer");
+        profileStreakText->SetLabel("");
+        profileEarningsText->SetLabel("");
+        profileNotesText->SetValue("");
+        doerChoresList->DeleteAllItems();
+        UpdateDoerActionButtons();
+        return;
+      }
+
+      wxColour avatarColor(doer->getAvatarColor().empty() ? "#4ECDC4" : doer->getAvatarColor());
+      profileAvatar->SetAvatarColor(avatarColor);
+      profileAvatar->SetInitial(doer->getName().empty() ? wxString("?") : wxString(doer->getName()).Left(1).Upper());
+      profileNameText->SetLabel(doer->getName());
+      profileStreakText->SetLabel(wxString::Format("%d-day streak", manager->getDoerStreak(doer->getId())));
+      profileEarningsText->SetLabel(wxString::Format("$%d earned • %d chores assigned", doer->getTotalEarnings(), doer->getChoreAmount()));
+      profileNotesText->SetValue(doer->getNotes());
+      doerProfilePanel->Layout();
+
+      RefreshDoerSubList(doerName);
+    }
+
+    void RefreshDoerSubList(const wxString& doerName) {
+      doerChoresList->DeleteAllItems();
+      auto doer = manager->findChoreDoerByName(doerName.ToStdString());
+      if (!doer) return;
+      for (const auto& chore : doer->assignedChores.item()) {
+        long row = doerChoresList->InsertItem(doerChoresList->GetItemCount(), to_string(chore->getId()));
+        doerChoresList->SetItem(row, 1, chore->getName());
+        doerChoresList->SetItem(row, 2, to_string(chore->getEarnings()));
+        doerChoresList->SetItem(row, 3, chore->toStringS(chore->getStatus()));
+      }
+      UpdateDoerActionButtons();
+    }
+
+    void UpdateDoerActionButtons() {
+      bool enable = !selectedDoerName.IsEmpty() && GetFirstSelectedItem(doerChoresList) != -1;
+      startBtn->Enable(enable);
+      completeBtn->Enable(enable);
+      resetBtn->Enable(enable);
+    }
+
+    void OnChoreSelected(wxListEvent& event) {
+      int choreId = (int)choresList->GetItemData(event.GetIndex());
+      auto chore = manager->findChoreById(choreId);
+      if (chore) {
+        choreDetailText->SetValue(chore->PrettyPrintClassAttributes());
+      }
+    }
+
+    void OnNewChore(wxCommandEvent&) {
+      ChoreEditorDialog dlg(this, *manager, nullptr);
+      if (dlg.ShowModal() == wxID_OK) {
+        manager->saveData();
+        RefreshChoresList();
+        SetStatusText("Chore added.");
+      }
+    }
+
+    void OnDeleteChore(wxCommandEvent&) {
+      long sel = GetFirstSelectedItem(choresList);
+      if (sel == -1) {
+        wxMessageBox("Select a chore first.", "No Selection", wxOK | wxICON_WARNING, this);
+        return;
+      }
+      int choreId = (int)choresList->GetItemData(sel);
+      if (manager->deleteChoreFromAvailable(choreId)) {
+        manager->saveData();
+        RefreshChoresList();
+        SetStatusText("Chore deleted.");
+      }
+      else {
+        wxMessageBox("Chore not found.", "Delete Failed", wxOK | wxICON_ERROR, this);
+      }
+    }
+
+    void OnModifyChore(wxCommandEvent&) {
+      long sel = GetFirstSelectedItem(choresList);
+      if (sel == -1) {
+        wxMessageBox("Select a chore first.", "No Selection", wxOK | wxICON_WARNING, this);
+        return;
+      }
+      int choreId = (int)choresList->GetItemData(sel);
+      auto chore = manager->findChoreById(choreId);
+      if (!chore) return;
+      ChoreEditorDialog dlg(this, *manager, chore);
+      if (dlg.ShowModal() == wxID_OK) {
+        manager->saveData();
+        RefreshChoresList();
+        SetStatusText("Chore updated.");
+      }
+    }
+
+    void OnManageCategories(wxCommandEvent&) {
+      ManageCategoriesDialog dlg(this, *manager);
+      dlg.ShowModal();
+      manager->saveData();
+      RefreshChoresList();
+    }
+
+    void OnDoerCardSelected(wxCommandEvent& event) {
+      selectedDoerName = event.GetString();
+      for (auto* card : doerCards) {
+        card->SetSelected(card->GetDoerName() == selectedDoerName);
+      }
+      RefreshDoerProfilePanel(selectedDoerName);
+    }
+
+    void OnDoerChoreSelectionChanged(wxListEvent&) {
+      UpdateDoerActionButtons();
+    }
+
+    void OnAddChoreDoer(wxCommandEvent&) {
+      wxString name = wxGetTextFromUser("Enter chore doer's name:", "Add Chore Doer", "", this);
+      if (name.IsEmpty()) return;
+      manager->addChoreDoer(name.ToStdString());
+      manager->saveData();
+      RefreshChoreDoersList();
+      SetStatusText("Chore doer " + name + " added.");
+    }
+
+    void OnEditDoerProfile(wxCommandEvent&) {
+      if (selectedDoerName.IsEmpty()) {
+        wxMessageBox("Select a chore doer first.", "No Selection", wxOK | wxICON_WARNING, this);
+        return;
+      }
+      auto doer = manager->findChoreDoerByName(selectedDoerName.ToStdString());
+      if (!doer) return;
+      DoerProfileEditDialog dlg(this, *doer);
+      if (dlg.ShowModal() == wxID_OK) {
+        manager->saveData();
+        RefreshChoreDoersList();
+        SetStatusText("Profile updated.");
+      }
+    }
+
+    void OnDeleteChoreDoer(wxCommandEvent&) {
+      if (selectedDoerName.IsEmpty()) {
+        wxMessageBox("Select a chore doer first.", "No Selection", wxOK | wxICON_WARNING, this);
+        return;
+      }
+      wxString doerName = selectedDoerName;
+      auto doer = manager->findChoreDoerByName(doerName.ToStdString());
+      if (doer && doer->getChoreAmount() > 0) {
+        int confirm = wxMessageBox("'" + doerName + "' has " + to_string(doer->getChoreAmount()) + " assigned chore(s). Delete anyway?",
+          "Confirm Delete", wxYES_NO | wxICON_WARNING, this);
+        if (confirm != wxYES) return;
+      }
+      if (manager->deleteChoreDoer(doerName.ToStdString())) {
+        if (doerName == selectedDoerName) selectedDoerName.Clear();
+        manager->saveData();
+        RefreshChoreDoersList();
+        SetStatusText("Chore doer " + doerName + " deleted.");
+      }
+    }
+
+    void RunDoerChoreAction(int action) {
+      long sel = GetFirstSelectedItem(doerChoresList);
+      if (sel == -1 || selectedDoerName.IsEmpty()) return;
+      int choreId = wxAtoi(doerChoresList->GetItemText(sel, 0));
+      string doerName = selectedDoerName.ToStdString();
+      string result;
+      switch (action) {
+      case 0: result = manager->startDoerChore(doerName, choreId); break;
+      case 1: result = manager->completeDoerChore(doerName, choreId); break;
+      case 2: result = manager->resetDoerChore(doerName, choreId); break;
+      }
+      manager->saveData();
+      RefreshDoerProfilePanel(selectedDoerName); // streak may have changed on completion
+      RefreshChoresList();
+      RefreshHistoryList();
+      wxMessageBox(result, "Chore Status Updated", wxOK | wxICON_INFORMATION, this);
+    }
+
+    void OnStartChore(wxCommandEvent&) { RunDoerChoreAction(0); }
+    void OnCompleteChore(wxCommandEvent&) { RunDoerChoreAction(1); }
+    void OnResetChore(wxCommandEvent&) { RunDoerChoreAction(2); }
+
+    void OnDoerContextMenu(wxContextMenuEvent&) {
+      if (selectedDoerName.IsEmpty()) return;
+      wxMenu menu;
+      menu.Append(ID_DOER_SORT_ID, "Sort by ID");
+      menu.Append(ID_DOER_SORT_NAME, "Sort by Name");
+      menu.Append(ID_DOER_SORT_EARNINGS, "Sort by Earnings");
+      menu.Append(ID_DOER_SORT_CATEGORY, "Sort by Category");
+      menu.Bind(wxEVT_MENU, &MainFrame::OnDoerSort, this, ID_DOER_SORT_ID, ID_DOER_SORT_CATEGORY);
+      PopupMenu(&menu);
+    }
+
+    void OnDoerSort(wxCommandEvent& event) {
+      auto doer = manager->findChoreDoerByName(selectedDoerName.ToStdString());
+      if (!doer) return;
+      switch (event.GetId()) {
+      case ID_DOER_SORT_ID: doer->sortAssignedChoresByID(); break;
+      case ID_DOER_SORT_NAME: doer->sortAssignedChoresByName(); break;
+      case ID_DOER_SORT_EARNINGS: doer->sortAssignedChoresByEarnings(); break;
+      case ID_DOER_SORT_CATEGORY: doer->sortAssignedChoresByCategory(manager->getCategoryRegistry()); break;
+      }
+      manager->saveData();
+      RefreshDoerSubList(selectedDoerName);
+    }
+
+    void OnOutputToFile(wxCommandEvent&) {
+      wxFileDialog dlg(this, "Output Chore Assignments", GetTestDataDir(), "assigned_chores.json",
+        "JSON files (*.json)|*.json", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+      if (dlg.ShowModal() != wxID_OK) return;
+      try {
+        string result = manager->outputChoreAssignmentsToFile(dlg.GetPath().ToStdString());
+        if (result.empty()) {
+          SetStatusText("Chore assignments written to " + dlg.GetPath());
+        }
+        else {
+          wxMessageBox(result, "Nothing Written", wxOK | wxICON_WARNING, this);
         }
       }
       catch (const exception& e) {
-        cerr << "Exception thrown in removeChoreDoer: \n" << e.what() << endl;
+        wxMessageBox(e.what(), "Error Writing File", wxOK | wxICON_ERROR, this);
       }
     }
 
-    // Method to add a new chore to the system from a JSON object
-    void addChore(const json& choreJson) {
-      shared_ptr<Chore> chore;
-
-      if (choreJson.is_null()) {
-        cerr << "Invalid chore JSON." << endl;
-        return;
-      }
-      if (choreJson.contains("difficulty") && choreJson["difficulty"].is_string()) {
-        string difficulty = choreJson["difficulty"].get<string>();
-
-        if (difficulty == "easy") {
-          chore = make_shared<EasyChore>(choreJson);
-        }
-        else if (difficulty == "medium") {
-          chore = make_shared<MediumChore>(choreJson);
-        }
-        else if (difficulty == "hard") {
-          chore = make_shared<HardChore>(choreJson);
-        }
-      }
-      Chores.push_back(chore);
+    void OnSave(wxCommandEvent&) {
+      manager->saveData();
+      SetStatusText("Saved.");
     }
 
-    // NOT IMPLEMENTED IN FINAL VERSION
-    /*
-    // Method to move a chore to leftover chores list by ID
-    void moveChoreToLeftover(int choreId) {
-      for (auto& doer : ChoreDoers) {
-        doer.assignedChores.moveItemToAnotherContainer(choreId, LeftoverChores);
-      }
+    void OnExit(wxCommandEvent&) {
+      Close(true);
     }
 
-    // Method to move a chore from leftover chores to a specific chore doer
-    void moveChoreFromLeftoverToDoer(const string& toDoer, int choreId) {
-      for (auto& doer : ChoreDoers) {
-        if (doer.getName() == toDoer) {
-          LeftoverChores.moveItemToAnotherContainer(choreId, doer.assignedChores);
-          break;
-        }
-        cout << "Chore Doer not found." << endl;
-      }
-    }
-    */
-
-    // Method to move a chore between two chore doers
-    // NOT IMPLEMENTED IN FINAL VERSION
-    /*
-    void moveChoreBetweenDoers(const string& fromDoer, const string& toDoer, int choreId) {
-      bool found = false;
-      for (auto& doer : ChoreDoers) {
-        if (doer->getName() == fromDoer) {
-          for (auto& targetDoer : ChoreDoers) {
-            if (targetDoer->getName() == toDoer) {
-              doer->assignedChores.moveItemToAnotherContainer(choreId, targetDoer->assignedChores);
-              found = true;
-              break;
-            }
-          }
-        }
-      }
-      if (!found) {
-        cout << "Chore or Chore Doer not found.\n" << endl;
-      }
-    }
-    */
-
-    //NOT IMPLEMENTED IN FINAL VERSION
-    /*
-    // Method to manually assign a chore to a ChoreDoer
-    void assignChoreDoer(int choreId, string& doerName) {
-      auto chore = std::find_if(Chores.begin(), Chores.end(), [choreId](const shared_ptr<Chore>& c) {
-        return c->getId() == choreId;
-        });
-      if (chore != Chores.end()) {
-        auto doer = std::find_if(ChoreDoers.begin(), ChoreDoers.end(), [&doerName](const shared_ptr<ChoreDoer>& d) {
-          return d->getName() == doerName;
-          });
-
-        if (doer != ChoreDoers.end()) {
-          doer->assignChore(*chore);
-        }
-        else {
-          std::cerr << "ChoreDoer " << doerName << " not found." << std::endl;
-        }
+    void OnAssignRandom(wxCommandEvent&) {
+      string result = manager->assignChoresRandomly();
+      manager->saveData();
+      RefreshChoreDoersList();
+      RefreshHistoryList();
+      if (result.empty()) {
+        SetStatusText("Chores assigned randomly.");
       }
       else {
-        std::cerr << "Chore ID " << choreId << " not found." << std::endl;
+        wxMessageBox(result, "Assign Chores", wxOK | wxICON_WARNING, this);
       }
     }
-    */
-    
-    // Method to assign chores randomly to chore doers
-    void assignChoresRandomly() {
+
+    void OnSearch(wxCommandEvent&) {
+      SearchDialog dlg(this, *manager);
+      dlg.ShowModal();
+    }
+
+    void OnCompare(wxCommandEvent&) {
+      CompareChoresDialog dlg(this);
+      if (dlg.ShowModal() == wxID_OK) {
+        string result = manager->compareChores(dlg.GetId1(), dlg.GetId2());
+        wxMessageBox(result, "Compare Chores", wxOK | wxICON_INFORMATION, this);
+      }
+    }
+
+    void OnSortChores(wxCommandEvent& event) {
+      bool descending = GetMenuBar()->IsChecked(ID_SORT_DESC);
+      switch (event.GetId()) {
+      case ID_SORT_ID: manager->sortChoresByID(!descending); break;
+      case ID_SORT_NAME: manager->sortChoresByName(!descending); break;
+      case ID_SORT_EARNINGS: manager->sortChoresByEarnings(!descending); break;
+      case ID_SORT_CATEGORY: manager->sortChoresByCategory(!descending); break;
+      }
+      manager->saveData();
+      RefreshChoresList();
+    }
+
+    void OnViewDetails(wxCommandEvent&) {
+      ShowReadOnlyTextDialog("All Chores - Full Details", manager->displayAllChoresAllAttributes());
+    }
+
+    void OnViewAssignments(wxCommandEvent&) {
+      ShowReadOnlyTextDialog("All Chore Doer Assignments", manager->displayAllChoreAssignments());
+    }
+
+    void ShowReadOnlyTextDialog(const wxString& title, const string& content) {
+      wxDialog dlg(this, wxID_ANY, title, wxDefaultPosition, wxSize(600, 500));
+      wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
+      wxTextCtrl* text = new wxTextCtrl(&dlg, wxID_ANY, content, wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_READONLY);
+      sizer->Add(text, 1, wxALL | wxEXPAND, 8);
+      wxButton* closeBtn = new wxButton(&dlg, wxID_OK, "Close");
+      sizer->Add(closeBtn, 0, wxALL | wxALIGN_CENTER, 8);
+      dlg.SetSizer(sizer);
+      dlg.ShowModal();
+    }
+
+    void OnSortAllDoers(wxCommandEvent& event) {
+      switch (event.GetId()) {
+      case ID_SORTALL_ID: manager->sortAllChoreDoersChoresByID(); break;
+      case ID_SORTALL_NAME: manager->sortAllChoreDoersChoresByName(); break;
+      case ID_SORTALL_EARNINGS: manager->sortAllChoreDoersChoresByEarnings(); break;
+      case ID_SORTALL_CATEGORY: manager->sortAllChoreDoersChoresByCategory(); break;
+      }
+      manager->saveData();
+      if (!selectedDoerName.IsEmpty()) RefreshDoerSubList(selectedDoerName);
+    }
+
+    void OnModifyProfile(wxCommandEvent&) {
+      ProfileDialog dlg(this, manager->getClient());
+      if (dlg.ShowModal() == wxID_OK) {
+        manager->saveData();
+        SetStatusText("Profile updated.");
+      }
+    }
+
+    void SwitchToHousehold(const string& filePath) {
+      if (manager) manager->saveData();
+      unique_ptr<ChoreManager> newManager;
       try {
-        // Check if there are chores to assign
-        if (Chores.empty()) {
-          std::cout << "No chores to assign.\n" << std::endl;
-          return;
-        }
-
-        // Check if there are chore doers available
-        if (ChoreDoers.empty()) {
-          std::cout << "No chore doers available.\n" << std::endl;
-          return;
-        }
-
-        // Create a random engine; you could also use default_random_engine
-        std::random_device rd;
-        std::mt19937 g(rd());
-
-        // Shuffle the chores using the random engine
-        shuffle(Chores.begin(), Chores.end(), g);
-
-        size_t choreIndex = 0;
-        // Loop over each chore and try to assign it to a chore doer
-        while (choreIndex < Chores.size()) {
-          for (auto& doer : ChoreDoers) {
-            if (choreIndex < Chores.size()) {
-              doer->assignChore(Chores[choreIndex++]);
-            }
-            else {
-              break; // Break if there are no more chores to assign
-            }
-          }
-        }
+        newManager = make_unique<ChoreManager>(filePath);
       }
-      catch (const std::exception& e) {
-        std::cout << "Exception thrown in assignChoresRandomly: " << e.what() << std::endl;
-      }
-    }
-
-    // Method to create a minimal chore structure with initialized attributes
-    // NOT IMPLEMENTED IN FINAL VERSION
-    /* 
-    void createMinimalChore() {
-      std::string name, difficulty, priority, multitasking_tips, input;
-      json choreJson;
-
-      // Automatically set chore ID
-      static int choreId = 1;  // Static counter to automatically increment chore IDs
-      choreJson["id"] = choreId++;
-
-      std::cout << "Enter chore name: ";
-      std::getline(std::cin, name);
-      choreJson["name"] = name;
-
-      // Automatically set other attributes
-      choreJson["description"] = "Standard description";
-      choreJson["status"] = "not started";
-      choreJson["frequency"] = "weekly";
-      choreJson["estimated_time"] = "1 hour";
-      choreJson["earnings"] = 10;  // Default earning
-      choreJson["days"] = std::vector<std::string>{ "Monday", "Wednesday" };
-      choreJson["location"] = "Home";
-      choreJson["tools_required"] = std::vector<std::string>{};
-      choreJson["materials_needed"] = std::vector<std::string>{};
-      choreJson["notes"] = "No additional notes";
-      choreJson["tags"] = std::vector<std::string>{ "general" };
-
-      // Set Difficulty
-      std::cout << "Enter difficulty (easy, medium, hard): ";
-      std::getline(std::cin, difficulty);
-      while (difficulty != "easy" && difficulty != "medium" && difficulty != "hard") {
-        std::cout << "Invalid difficulty. Please enter 'easy', 'medium', or 'hard': \n";
-        std::getline(std::cin, difficulty);
-      }
-      choreJson["difficulty"] = difficulty;
-
-      // Set Priority
-      std::cout << "Enter priority (low, moderate, high): \n";
-      std::getline(std::cin, priority);
-      while (priority != "low" && priority != "moderate" && priority != "high") {
-        std::cout << "Invalid priority. Please enter 'low', 'moderate', or 'high': \n";
-        std::getline(std::cin, priority);
-      }
-      choreJson["priority"] = priority;
-
-      // Conditional inputs based on difficulty
-      if (difficulty == "easy") {
-        std::cout << "Enter multitasking tips for easy chores: \n";
-        std::getline(std::cin, multitasking_tips);
-        choreJson["multitasking_tips"] = multitasking_tips;
-      }
-      else if (difficulty == "medium") {
-        std::cout << "Enter variations for medium chores (comma separated): \n";
-        std::getline(std::cin, input);
-        choreJson["variations"] = input;  // Assuming simple string, adjust if JSON array needed
-      }
-      else if (difficulty == "hard") {
-        std::vector<json> subtasks;
-        char choice = 'y';
-        while (choice == 'y') {
-          json subtask;
-          std::string subtaskName, subtaskTime;
-          int subtaskEarnings;
-
-          std::cout << "Enter a name for one subtask: \n";
-          std::getline(std::cin, subtaskName);
-          subtask["name"] = subtaskName;
-
-          std::cout << "Enter estimated time for the subtask: \n";
-          std::getline(std::cin, subtaskTime);
-          subtask["estimated_time"] = subtaskTime;
-
-          std::cout << "Enter earnings for the subtask (integer value): \n";
-          std::cin >> subtaskEarnings;
-          subtask["earnings"] = subtaskEarnings;
-
-          std::cin.ignore();  // Clear newline character after single char input
-          subtasks.push_back(subtask);
-
-          std::cout << "Add another subtask? (y/n): \n";
-          std::cin >> choice;
-          std::cin.ignore();  // Clear newline character after single char input
-        }
-        choreJson["subtasks"] = subtasks;
-      }
-
-      // Add the chore to the chore list
-      addChore(choreJson);
-    }
-    */
-    // Method to create a full-fledged chore with all details
-    // NOT IMPLEMENTED IN FINAL VERSION
-    /*
-    void createFullChore() {
-      // Basic chore details
-      string name, description, frequency, estimated_time, difficulty, days, location,
-        tools_required, materials_needed, priority, notes, status, tags, multitasking_tips,
-        earningsInput, input;
-      double earnings;
-
-      // Variables for handling unique attributes (Easy, Medium, Hard)
-      json choreJson;
-      char choice;
-      //Id
-      choreJson["id"] = choreCount++;
-
-      //Name
-      cout << "Enter chore name: \n";
-      getline(cin, name);
-      choreJson["name"] = name.empty() ? "" : name;
-
-      //Description
-      cout << "Enter chore description: \n";
-      getline(cin, description);
-      choreJson["description"] = description.empty() ? "" : description;
-
-      //Frequency
-      cout << "Enter chore frequency (e.g., daily, weekly): \n";
-      getline(cin, frequency);
-      choreJson["frequency"] = frequency.empty() ? "" : frequency;
-
-      //Estimated_time
-      cout << "Enter estimated time for chore completion: \n";
-      getline(cin, estimated_time);
-      choreJson["estimated_time"] = estimated_time.empty() ? "" : estimated_time;
-
-      // Handle earnings input with robust validation
-      // If not entered correctly -> re-enter
-      while (true) {
-        cout << "Enter earnings for chore (integer value): \n";
-        getline(cin, earningsInput);
-        try {
-          earnings = stoi(earningsInput);
-          choreJson["earnings"] = earnings;
-          break;  // Break out of the loop if stoi succeeds
-        }
-        catch (const exception& e) {  // Catching all exceptions
-          cout << "Invalid input for earnings. Please enter a valid integer.\n" << e.what() << endl;
-        }
-      }
-
-      //Days
-      cout << "Enter days when the chore should be performed (comma separated): \n";
-      getline(cin, days);
-      choreJson["days"] = days.empty() ? json::array() : json::parse("[" + days + "]");
-
-      //Location
-      cout << "Enter chore location: \n";
-      getline(cin, location);
-      choreJson["location"] = location.empty() ? json::array() : json::parse("[" + location + "]");
-
-      //Tools_required
-      cout << "Enter tools required (comma separated): \n";
-      getline(cin, tools_required);
-      choreJson["tools_required"] = tools_required.empty() ? json::array() : json::parse("[" + tools_required + "]");
-
-      //Materials_needed
-      cout << "Enter materials needed (comma separated): \n";
-      getline(cin, materials_needed);
-      choreJson["materials_needed"] = materials_needed.empty() ? json::array() : json::parse("[" + materials_needed + "]");
-
-      //Notes
-      cout << "Enter any additional notes: \n";
-      getline(cin, notes);
-      choreJson["notes"] = notes.empty() ? "" : notes;
-
-      //Tags
-      cout << "Enter tags for the chore (comma separated): \n";
-      getline(cin, tags);
-      choreJson["tags"] = tags.empty() ? json::array() : json::parse("[" + tags + "]");
-
-      //Difficulty
-      //If not entered correctly -> re-enter
-      cout << "Enter difficulty (easy, medium, hard): ";
-      getline(cin, difficulty);
-      while (difficulty != "easy" && difficulty != "medium" && difficulty != "hard" && !difficulty.empty()) {
-        cout << "Invalid difficulty. Please enter 'easy', 'medium', or 'hard': \n";
-        getline(cin, difficulty);
-      }
-      choreJson["difficulty"] = difficulty.empty() ? "" : difficulty;
-
-      //Priority
-      //If not entered correctly -> re-enter
-      cout << "Enter priority (low, moderate, high): ";
-      getline(cin, priority);
-      while (priority != "low" && priority != "moderate" && priority != "high" && !priority.empty()) {
-        cout << "Invalid priority. Please enter 'low', 'moderate', or 'high': \n";
-        getline(cin, priority);
-      }
-      choreJson["priority"] = priority.empty() ? "" : priority;
-
-      //Status
-      //If not entered correctly -> re-enter
-      cout << "Enter status (not started, in progress, completed): \n";
-      getline(cin, status);
-      while (status != "not started" && status != "in progress" && status != "completed" && !status.empty()) {
-        cout << "Invalid status. Please enter 'not started', 'in progress', or 'completed': \n";
-        getline(cin, status);
-      }
-      choreJson["status"] = status.empty() ? "" : status;
-
-      // Unique attributes based on difficulty
-      // EASY
-      if (difficulty == "easy") {
-        cout << "Enter multitasking tips for easy chore: \n";
-        getline(cin, multitasking_tips);
-        choreJson["multitasking_tips"] = multitasking_tips.empty() ? "" : multitasking_tips;
-      }
-      // MEDIUM
-      else if (difficulty == "medium") {
-
-        cout << "Are there any variations? Enter 'y' for yes or 'n' for no: \n";
-        cin >> choice;
-
-        if (choice == 'y')
-        {
-          cout << "Enter variations for medium chore (comma separated): \n";
-          cin.ignore();
-          getline(cin, input);
-          choreJson["variations"] = input.empty() ? json::array() : json::parse("[" + input + "]");
-        }
-      }
-      // HARD
-      else if (difficulty == "hard") {
-        json subtask;
-        string subtaskName;
-        string subtaskTime;
-        int subtaskEarnings;
-
-        cout << "Are there any subtasks? Enter 'y' for yes or 'n' for no: \n";
-        cin >> choice;
-
-        if (choice == 'y')
-        {
-          cout << "Enter a name for one subtask: \n";
-          getline(cin, subtaskName);
-
-          cout << "Enter estimated time for the subtask: \n";
-          getline(cin, subtaskTime);
-
-          // Handle earnings input with robust validation
-          while (true) {
-            cout << "Enter earnings for chore (integer value) or whole dollar amount: \n";
-
-            try {
-              cin >> subtaskEarnings;
-              choreJson["earnings"] = subtaskEarnings; // If not int -> catch exception -> repeat loop
-              break;  // Break out of the loop if stoi succeeds
-            }
-            catch (const exception& e) {  // Catching all exceptions
-              cout << "Invalid input for earnings. Please enter a valid integer.\n" << e.what() << endl;
-            }
-          }
-
-          // Save the rest of subtask
-          subtask["name"] = subtaskName.empty() ? "" : subtaskName;
-          subtask["estimated_time"] = subtaskTime.empty() ? "" : subtaskTime;
-          subtask["earnings"] = to_string(subtaskEarnings).empty() ? 0 : subtaskEarnings;
-          choreJson["subtasks"] = json::array({ subtask });
-        }
-        // If n is entered, create empty subtask
-        else
-        {
-          cout << "No subtasks added.\n" << endl;
-          choreJson["subtasks"] = json::array(); // should be empty
-        }
-      }
-
-      // Add the chore to the chore list and save file
-      addChore(choreJson);
-      cout << "Chore added successfully!\n" << endl;
-    }
-    */
-
-    //Function wrapper for templated sort function
-    template<typename Comparator>
-    void sortChores(Comparator comp, bool ascending = true) {
-      try
-      {
-        Chores.sortItems(comp, ascending);
-      }
-      catch (const exception& e)
-      {
-        cerr << "Exception caught in sortChores: \n" << e.what() << endl;
-      }
-    }
-
-    void searchByID(int id) {
-      auto resultsById = Chores.searchItem<int>(id, matchById);
-      if (resultsById.empty()) {
-        // Search through each ChoreDoer's assigned chores
-        for (auto& doer : ChoreDoers) {
-          auto doerResults = doer->assignedChores.searchItem<int>(id, matchById);
-          if (!doerResults.empty()) {
-            resultsById.insert(resultsById.end(), doerResults.begin(), doerResults.end());
-          }
-        }
-      }
-      if (resultsById.empty()) {
-        std::cout << "No chore found with the specified ID.\n" << std::endl;
-      }
-      else {
-        Chores.displaySearchResults(resultsById);
-      }
-    }
-
-    void searchByName(const std::string& name) {
-      auto resultsName = Chores.searchItem<std::string>(name, matchByName);
-      if (resultsName.empty()) {
-        // Search through each ChoreDoer's assigned chores
-        for (auto& doer : ChoreDoers) {
-          auto doerResults = doer->assignedChores.searchItem<std::string>(name, matchByName);
-          if (!doerResults.empty()) {
-            resultsName.insert(resultsName.end(), doerResults.begin(), doerResults.end());
-          }
-        }
-      }
-      if (resultsName.empty()) {
-        std::cout << "No chore found with the specified name.\n" << std::endl;
-      }
-      else {
-        Chores.displaySearchResults(resultsName);
-      }
-    }
-
-    void searchByEarnings(int earnings) {
-      auto resultsEarned = Chores.searchItem<int>(earnings, matchByEarnings);
-      if (resultsEarned.empty()) {
-        // Search through each ChoreDoer's assigned chores
-        for (auto& doer : ChoreDoers) {
-          auto doerResults = doer->assignedChores.searchItem<int>(earnings, matchByEarnings);
-          if (!doerResults.empty()) {
-            resultsEarned.insert(resultsEarned.end(), doerResults.begin(), doerResults.end());
-          }
-        }
-      }
-      if (resultsEarned.empty()) {
-        std::cout << "No chore found with the specified earnings.\n" << std::endl;
-      }
-      else {
-        Chores.displaySearchResults(resultsEarned);
-      }
-    }
-
-    /*
-    std::string searchChoreDoer(const std::string& name) {
-      std::string info;
-      if (ChoreDoers.empty())
-      {
-        std::cout << "No chore doers available.\n" << std::endl;
-        return "There are no chore doers.\nAdd a chore doer in the main menu.\n";
-      }
-      for (auto doer : ChoreDoers) {
-        if (doer->getName() == name) {
-          info += doer->printChoreDoer() + "\n";
-          if (!doer->assignedChores.empty())
-            info += displayAssignedChores(name);
-        }
-        else {
-          info = "Could not find specified chore doer\n";
-        }
-      }
-      return info;
-    }
-    */
-
-    // Sorts chores by earnings and prints a confirmation message.
-    void sortChoresByEarnings(bool ascending = true) {
-      CompareEarnings comp;  // Instantiate the comparator for earnings
-      if (!Chores.empty()) {  // Check if there are chores to sort
-        Chores.sortItems(comp, ascending);  // Perform the sort operation
-        std::cout << "Chores sorted by earnings.\n";  // Print confirmation
-      }
-    }
-
-    // Sorts chores by difficulty and prints a confirmation message.
-    void sortChoresByDifficulty(bool ascending = true) {
-      CompareDifficulty comp;  // Instantiate the comparator for difficulty
-      if (!Chores.empty()) {  // Check if there are chores to sort
-        Chores.sortItems(comp, ascending);  // Perform the sort operation
-        std::cout << "Chores sorted by difficulty.\n";  // Print confirmation
-      }
-    }
-
-    // Sorts chores by their unique IDs and prints a confirmation message.
-    void sortChoresByID(bool ascending = true) {
-      CompareID comp;  // Instantiate the comparator for ID
-      if (!Chores.empty()) {  // Check if there are chores to sort
-        Chores.sortItems(comp, ascending);  // Perform the sort operation
-        std::cout << "Chores sorted by ID.\n";  // Print confirmation
-      }
-    }
-
-    // Sorts chores by names and prints a confirmation message.
-    void sortChoresByName(bool ascending = true) {
-      CompareName comp;  // Instantiate the comparator for name
-      if (!Chores.empty()) {  // Check if there are chores to sort
-        Chores.sortItems(comp, ascending);  // Perform the sort operation
-        std::cout << "Chores sorted by name.\n";  // Print confirmation
-      }
-    }
-    // NOT IMPLEMENTED
-    /*
-    // Sorts all assigned chores for each chore doer by earnings and prints a confirmation message.
-    void sortAllChoreDoersChoresByEarnings(bool ascending = true) {
-      if (ChoreDoers.empty()) {  // Check if there are chore doers
-        std::cout << "No chore doers available.\n";  // Notify if no chore doers are available
+      catch (const exception& e) {
+        wxMessageBox(wxString("Failed to load household:\n") + e.what(), "Error", wxOK | wxICON_ERROR, this);
         return;
       }
-      for (auto& doer : ChoreDoers) {  // Loop through each chore doer
-        doer->sortAssignedChoresByEarnings(ascending);  // Sort their assigned chores by earnings
-      }
-      std::cout << "Sorted all chore doers' chores by earnings.\n";  // Print confirmation
+      manager = std::move(newManager);
+      householdRegistry.setLastOpenHousehold(filePath);
+      selectedDoerName.Clear();
+      choreDetailText->Clear();
+      currentHistoryDate = TodayDateString();
+      UpdateTitle();
+      RefreshChoresList();
+      RefreshChoreDoersList();
+      RefreshHistoryList();
+      SetStatusText("Switched household.");
     }
 
-    // Sorts all assigned chores for each chore doer by difficulty and prints a confirmation message.
-    void sortAllChoreDoersChoresByDifficulty(bool ascending = true) {
-      if (ChoreDoers.empty()) {  // Check if there are chore doers
-        std::cout << "No chore doers available.\n";  // Notify if no chore doers are available
+    void OnSwitchHousehold(wxCommandEvent&) {
+      HouseholdPickerDialog dlg(this, householdRegistry, householdRegistry.getLastOpenHouseholdPath());
+      if (dlg.ShowModal() == wxID_OK) {
+        string path = dlg.GetSelectedPath();
+        if (!path.empty() && path != householdRegistry.getLastOpenHouseholdPath()) {
+          SwitchToHousehold(path);
+        }
+      }
+    }
+
+    void OnNewHousehold(wxCommandEvent&) {
+      wxString name = wxGetTextFromUser("Enter new household's name:", "New Household", "", this);
+      if (name.IsEmpty()) return;
+      string errorMsg;
+      string path = householdRegistry.createHousehold(name.ToStdString(), errorMsg);
+      if (path.empty()) {
+        wxMessageBox(errorMsg, "Could Not Create Household", wxOK | wxICON_ERROR, this);
         return;
       }
-      for (auto& doer : ChoreDoers) {  // Loop through each chore doer
-        doer->sortAssignedChoresByDifficulty(ascending);  // Sort their assigned chores by difficulty
-      }
-      std::cout << "Sorted all chore doers' chores by difficulty.\n";  // Print confirmation
-    }
-
-    // Sorts all assigned chores for each chore doer by ID and prints a confirmation message.
-    void sortAllChoreDoersChoresByID(bool ascending = true) {
-      if (ChoreDoers.empty()) {  // Check if there are chore doers
-        std::cout << "No chore doers available.\n";  // Notify if no chore doers are available
-        return;
-      }
-      for (auto& doer : ChoreDoers) {  // Loop through each chore doer
-        doer->sortAssignedChoresByID(ascending);  // Sort their assigned chores by ID
-      }
-      std::cout << "Sorted all chore doers' chores by ID.\n";  // Print confirmation
-    }
-    */
-    // Compares two chores based on their IDs to check if they are identical.
-    void compareChores(int id1, int id2) {
-      if (id1 < 0 || id2 < 0) {  // Validate the IDs to ensure they are non-negative
-        cout << "Invalid chore ID provided. ID must be non-negative.\n";
-        return;
-      }
-      auto chore1 = find_if(Chores.begin(), Chores.end(), [id1](const shared_ptr<Chore>& chore) {
-        return chore->getId() == id1;  // Find the first chore by ID
-        });
-      auto chore2 = find_if(Chores.begin(), Chores.end(), [id2](const shared_ptr<Chore>& chore) {
-        return chore->getId() == id2;  // Find the second chore by ID
-        });
-
-      if (chore1 != Chores.end() && chore2 != Chores.end()) {  // Ensure both chores are found
-        if (**chore1 == **chore2) {
-          cout << "The two chores are identical.\n";
-        }
-        else {
-          cout << "The two chores are not identical.\n";
-        }
-      }
-      else {
-        cout << "One or both chore IDs not found.\n";
+      int confirm = wxMessageBox("Household '" + name + "' created. Switch to it now?", "New Household", wxYES_NO | wxICON_QUESTION, this);
+      if (confirm == wxYES) {
+        SwitchToHousehold(path);
       }
     }
 
-    // Provides a menu for searching chores by ID, name, or earnings.
-    void searchMenu() {
-      int choice, id, earnings;
-      string name;
-      bool searchMenuRunning = true;
-      while (searchMenuRunning) {
-        cout << "\nSearch Chores Menu\n";
-        cout << "1. Search by ID\n";
-        cout << "2. Search by Name\n";
-        cout << "3. Search by Earnings\n";
-        cout << "4. Back to Main Menu\n";
-        cout << "Enter your choice: ";
-        cin >> choice;
-        cin.ignore();  // Clear the newline character after the integer input
-
-        switch (choice) {
-        case 1:
-          cout << "Enter the ID of the chore to search for: ";
-          cin >> id;
-          cin.ignore();
-          searchByID(id);
-          break;
-        case 2:
-          cout << "Enter the name of the chore to search for: ";
-          getline(cin, name);
-          searchByName(name);
-          break;
-        case 3:
-          cout << "Enter the earnings of the chores to search for: ";
-          cin >> earnings;
-          cin.ignore();
-          searchByEarnings(earnings);
-          break;
-        case 4:
-          searchMenuRunning = false;
-          break;
-        default:
-          cout << "Invalid choice. Please try again.\n";
-          break;
-        }
-      }
+    void OnManageHouseholds(wxCommandEvent&) {
+      ManageHouseholdsDialog dlg(this, householdRegistry, *manager);
+      dlg.ShowModal();
+      UpdateTitle();
     }
+  };
 
-    // Provides a menu for sorting chores by ID, name, earnings, or difficulty.
-    void sortMenu() {
-      int choice;
-      bool sortMenuRunning = true;
+  class ChoreManagerApp : public wxApp {
+  private:
+    unique_ptr<HouseholdRegistry> householdRegistry;
 
-      while (sortMenuRunning) {
-        cout << "\nSort Chores Menu\n";
-        cout << "1. Sort by ID\n";
-        cout << "2. Sort by Name\n";
-        cout << "3. Sort by Earnings\n";
-        cout << "4. Sort by Difficulty\n";
-        cout << "5. Back to Main Menu\n";
-        cout << "Enter your choice: ";
-        cin >> choice;
-        cin.ignore();  // Clear the newline character after the integer input
+  public:
+    bool OnInit() override {
+      if (!wxApp::OnInit()) return false;
 
-        switch (choice) {
-        case 1:
-          cout << "Sorting chores by ID.\n";
-          sortChoresByID();
-          break;
-        case 2:
-          cout << "Sorting chores by Name.\n";
-          sortChoresByName();
-          break;
-        case 3:
-          cout << "Sorting chores by Earnings.\n";
-          sortChoresByEarnings();
-          break;
-        case 4:
-          cout << "Sorting chores by Difficulty.\n";
-          sortChoresByDifficulty();
-          break;
-        case 5:
-          sortMenuRunning = false;
-          break;
-        default:
-          cout << "Invalid choice. Please try again.\n";
-          break;
-        }
+      try {
+        householdRegistry = make_unique<HouseholdRegistry>(
+          GetHouseholdsDir(), GetAppStatePath(), GetTestDataFilePath("data.json"));
       }
+      catch (const exception& e) {
+        wxMessageBox(wxString("Failed to initialize household storage:\n") + e.what(), "Startup Error", wxOK | wxICON_ERROR);
+        return false;
+      }
+
+      string chosenPath = householdRegistry->getLastOpenHouseholdPath();
+      if (householdRegistry->listHouseholds().size() > 1) {
+        HouseholdPickerDialog dlg(nullptr, *householdRegistry, chosenPath);
+        if (dlg.ShowModal() != wxID_OK) return false;
+        chosenPath = dlg.GetSelectedPath();
+      }
+
+      if (chosenPath.empty()) {
+        wxMessageBox("No household could be opened.", "Startup Error", wxOK | wxICON_ERROR);
+        return false;
+      }
+
+      unique_ptr<ChoreManager> manager;
+      try {
+        manager = make_unique<ChoreManager>(chosenPath);
+      }
+      catch (const exception& e) {
+        wxMessageBox(wxString("Failed to load chore data:\n") + e.what(), "Startup Error", wxOK | wxICON_ERROR);
+        return false;
+      }
+
+      householdRegistry->setLastOpenHousehold(chosenPath);
+
+      MainFrame* frame = new MainFrame(std::move(manager), *householdRegistry);
+      frame->Show(true);
+      return true;
     }
   };
 }
-int main() {
-  try {
-    // Define the file path for the main data file
-    string testFile = DATA_FILE_PATH + "data.json";
 
-    // Define the file path for the file where assigned chores are written
-    string assignedChoresFile = DATA_FILE_PATH + "assigned_chores.json";
-
-    // Instantiate a ChoreManager object using the data file path
-    ChoreApp::ChoreManager manager(testFile);
-
-    // Flag to control the main loop
-    bool running = true;
-    string input; // Variable to store user input
-    int choice;   // Variable to store user's menu choice
-    int id;       // Variable to store chore or chore doer ID
-
-    // Main loop to display the menu and process user input
-    while (running) {
-      // Display the main menu options
-      cout << "\nChore Manager System\n";
-      cout << "1. Add Chore Doer\n";
-      cout << "2. Assign Chores Randomly\n";
-      cout << "3. Show All Chores\n";
-      cout << "4. Display All Assigned Chores\n";
-      cout << "5. Display All Chores with all data\n";
-      cout << "6. Print All Chore Doers Assigned Chores to File\n";
-      cout << "7. Delete a Chore by ID\n";
-      cout << "8. Delete a Chore Doer by Name\n";
-      cout << "9. Display All Chore Doers\n";
-      cout << "10. Search Chores\n";
-      cout << "11. Compare Two Chores\n";
-      cout << "12. Sort Chores\n";
-      cout << "15. Exit\n";
-      cout << "Enter your choice: \n";
-      cin >> choice;
-      cin.ignore();  // Clear the newline character to prepare for next input
-
-      switch (choice) {
-      case 1:
-        cout << "Enter chore doer's name: \n";
-        getline(cin, input); // Get the chore doer's name from user
-        manager.addChoreDoer(input); // Add the chore doer to the system
-        cout << "Chore doer " << input << " added successfully.\n";
-        break;
-      case 2:
-        manager.assignChoresRandomly(); // Assign chores to chore doers randomly
-        cout << "Chores have been assigned randomly.\n";
-        break;
-      case 3:
-        cout << "Listing all chores:\n";
-        cout << manager.displayChoreList(); // Display a list of all chores
-        break;
-      case 4:
-        cout << "Displaying chores assigned to all chore doers:\n";
-        cout << manager.displayAllChoreAssignments(); // Display all assigned chores
-        break;
-      case 5:
-        cout << "Displaying all chores with all data:\n";
-        cout << manager.displayAllChoresAllAttributes(); // Display detailed info of all chores
-        break;
-      case 6:
-        manager.outputChoreAssignmentsToFile(assignedChoresFile); // Output chore assignments to a file
-        cout << "Chore assignments have been printed to " << assignedChoresFile << "\n";
-        break;
-      case 7:
-        cout << "Enter the ID of the chore to delete: ";
-        cin >> id;
-        cin.ignore();
-        manager.deleteChoreFromAvailable(id); // Delete the specified chore by ID
-        cout << "Chore with ID " << id << " has been deleted.\n";
-        break;
-      case 8:
-        cout << "Enter the name of the chore doer to delete: ";
-        getline(cin, input);
-        manager.deleteChoreDoer(input); // Delete the specified chore doer by name
-        break;
-      case 9:
-        cout << "Displaying all chore doers:\n";
-        cout << manager.displayChoreDoerList(); // Display all chore doers
-        break;
-      case 10:
-        manager.searchMenu(); // Display the search menu
-        break;
-      case 11:
-        int choreId1, choreId2;
-        cout << "Enter the ID of the first chore to compare: ";
-        cin >> choreId1;
-        cout << "Enter the ID of the second chore to compare: ";
-        cin >> choreId2;
-        cin.ignore();
-        manager.compareChores(choreId1, choreId2); // Compare two chores by ID
-        break;
-      case 12:
-        manager.sortMenu(); // Display the sorting menu
-        break;
-      case 13:
-        running = false; // Set the flag to false to exit the loop
-        cout << "Exiting Chore Manager System.\n";
-        break;
-      default:
-        cout << "Invalid choice. Please try again.\n"; // Handle invalid menu options
-        break;
-      }
-    }
-  }
-  catch (const exception& e) {
-    // Catch and display any exceptions that occur during execution
-    cout << "Exception caught in main: " << e.what() << endl;
-  }
-  return 0; // Return 0 to indicate successful completion
-}
+wxIMPLEMENT_APP(ChoreApp::ChoreManagerApp);

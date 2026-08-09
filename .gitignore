@@ -361,3 +361,16 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# ---- ChoreConsole-specific ----
+
+# vcpkg's fetched/built package cache (wxWidgets, etc.) - large, machine-specific,
+# regenerated automatically on first build from vcpkg.json.
+vcpkg_installed/
+
+# Per-household runtime data and app state - this is the user's live chore-tracking
+# data (doer names, assignments, history), not sample/seed content, so it isn't
+# versioned. TestData/data.json remains tracked as the seed file used to bootstrap
+# the first "Default" household on a fresh checkout.
+TestData/households/
+TestData/app_state.json
