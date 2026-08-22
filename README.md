@@ -1,100 +1,40 @@
-# Chore Manager System
+# Chore Manager
 
-## Overview
-The Chore Manager System is designed to manage and track household chores. It allows users to create chore doers, assign chores randomly, and manage chore details interactively. This system is built using C++ and utilizes JSON for data handling.
-
-## Features
-
-- **User Profiles**: Manage user preferences and profiles.
-- **Chore Assignment**: Assign chores randomly or manually to chore doers.
-- **Data Management**: Load, modify, and save chore data from/to JSON files.
-- **Sorting and Searching**: Sort chores by various attributes and search for specific chores.
-- **Interactive Menus**: Easy-to-use text-based menus for navigating through the application's features.
-
-## Getting Started
-
-1. **Compile the Code**:
-        Ensure you have a C++ compiler that supports C++17 or above. Compile the project using:
-        ```
-        g++ -std=c++17 -o ChoreManager main.cpp
-        ```
-2. **Run the Application**:
-        Once compiled, you can run the application by executing:
-        ```
-        ./ChoreManager
-        ```
-
-3. **Follow the On-Screen Prompts**:
-        Navigate through the application using the numbered menus to manage chores and chore doers.
-
-## File Structure
-
-- **main.cpp**: Contains the main function and is the entry point of the application.
-- **json.hpp**: Core application logic for loading and saving json data to and from json file.
-
-## Dependencies
-
-- **[JSON for Modern C++](https://github.com/nlohmann/json)**: Used for handling JSON data within the application. Ensure to include this in your project directory or install it system-wide.
-
-## Documentation
-
-### Classes and Functions
-
-- **Client**
-    - Manages user profiles and settings.
-    - Methods for serializing and modifying user data.
-
-- **Chore**
-    - Base class for chores with attributes like ID, name, difficulty, and earnings.
-    - Functions for serialization and pretty printing.
-
-- **EasyChore, MediumChore, HardChore**
-    - Derived classes from `Chore` with specialized attributes and methods suitable for each difficulty level.
-
-- **Container<T>**
-    - Templated class to manage collections of objects like chores or chore doers.
-    - Includes methods for adding, deleting, sorting, and searching items.
-
-- **ChoreManager**
-    - Main class that integrates user profiles, chores, and chore doers.
-    - Handles file operations and user interactions through various menus.
-
-### Main Functions
+A desktop household chore manager for Windows, built with **wxWidgets** and **C++20**. Track chores, assign them to chore doers, log completions with earnings, and manage multiple households, each saved as its own JSON file.
 
 ## Features
 
-- **Add Chore Doer**: Add a new person responsible for doing chores.
-- **Assign Chores Randomly**: Distribute chores to the chore doers randomly.
-- **Show All Chores**: Display a list of all the chores that need to be done.
-- **Display All Assigned Chores**: Show all chores that have already been assigned to chore doers.
-- **Display All Chores with All Data**: Show detailed information for every chore, including who is responsible for it.
-- **Print All Chore Doers Assigned Chores to File**: Save a list of all chore doers and their respective chores to a file.
-- **Delete a Chore by ID**: Remove a chore from the list using its unique identifier.
-- **Delete a Chore Doer by Name**: Remove a chore doer from the system by entering their name.
-- **Display All Chore Doers**: List all the individuals responsible for chores.
-- **Search Chores**: Look up chores based on specific criteria like ID, name, or other attributes.
-- **Compare Two Chores**: Check if two chores are identical or compare their details.
-- **Sort Chores**: Organize the list of chores based on certain attributes, such as difficulty or time required.
-- **Exit**: Leave the chore management system.
+- **Multiple households** - create, switch between, and delete independent households (own chores, doers, and history), managed from the Household menu.
+- **Chores** - create, modify, delete, search, compare, and sort chores by ID, name, earnings, or category. Chores carry a name, category, difficulty, earnings, status, priority, and frequency.
+- **Custom categories** - manage the set of chore categories per household via "Manage Categories...".
+- **Chore doers** - add/delete doers, edit their profile (notes, etc.), and view a card-based roster with streaks and total earnings.
+- **Assignment workflow** - assign chores randomly across doers, or manually via each doer's profile; Start / Complete / Reset a chore's status per doer.
+- **Activity history** - a day-by-day log of every start/complete/reset action with timestamps and earnings, navigable with Prev/Today/Next.
+- **Search, sort, and compare** tools for chores, plus exporting all chore-doer assignments to a file.
+- **Bubbly UI** - a custom rounded-button and card-panel visual language shared across all tabs (`ChoreApp::Palette`, `RoundedButton`, `CardPanel`).
 
-- *Many functions have not been implemented yet*
+## Project Structure
 
-## Usage
+- **main.cpp** - application entry point and all wxWidgets UI (`ChoreApp` namespace): main frame, tabs, dialogs, and the custom-drawn controls.
+- **ChoreModel.h** - core domain model: `Chore` and its `EasyChore`/`MediumChore`/`HardChore` subclasses, `ChoreDoer`, the generic `Container<T>` collection, `ChoreManager` (owns chores/doers/history and JSON load/save for one household), and `HouseholdRegistry` (tracks known households and which one was last open).
+- **json.hpp** - [nlohmann/json](https://github.com/nlohmann/json), used for all persistence.
+- **TestData/** - runtime data directory: `app_state.json` (registry of households) plus a `households/` folder holding one JSON file per household.
 
-- Launch the application and navigate through the menu options to manage chores and chore doers.
+## Building
 
-## Requirements
+Requires Visual Studio 2022 (v143 toolset) with the Desktop C++ workload, and [vcpkg](https://github.com/microsoft/vcpkg) in manifest mode (dependencies are declared in `vcpkg.json` and restore automatically on build).
 
-- C++ compiler with support for C++11 or higher.
-- Standard Template Library (STL).
+1. Open `ChoreConsole.sln` in Visual Studio.
+2. Build the `ChoreConsole` project (Debug or Release, x64). vcpkg will restore wxWidgets and its dependencies on first build.
+3. Run `x64\<Configuration>\ChoreConsole.exe`.
 
-## Compilation
+From the command line:
 
-To compile the Chore Manager system, ensure your environment is set up with a compatible C++ compiler and run the following command:
-
-```bash
-g++ -o ChoreManager main.cpp -std=c++17
 ```
+"C:\Program Files\Microsoft Visual Studio\2022\<Edition>\MSBuild\Current\Bin\amd64\MSBuild.exe" ChoreConsole.sln /p:Configuration=Release /p:Platform=x64
+```
+
+The executable resolves its `TestData` directory relative to its own location (two levels up from `x64\<Configuration>\`), so it works whether launched from Visual Studio or by double-clicking the built `.exe`.
 
 ## License
 

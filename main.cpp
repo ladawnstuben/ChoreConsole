@@ -12,8 +12,6 @@
 #include <wx/choice.h>
 #include <wx/combobox.h>
 #include <wx/scrolwin.h>
-#include <wx/artprov.h>
-#include <wx/toolbar.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
 #include <wx/filedlg.h>
@@ -131,6 +129,25 @@ namespace ChoreApp
   wxDECLARE_EVENT(EVT_DOER_CARD_SELECTED, wxCommandEvent);
   wxDEFINE_EVENT(EVT_DOER_CARD_SELECTED, wxCommandEvent);
 
+  // Shared color palette for the "bubbly" visual language, centralized so every tab,
+  // card, and button draws from the same set of accents instead of ad-hoc wxColour
+  // literals scattered through each control.
+  namespace Palette {
+    static const wxColour Background(255, 250, 240);   // warm cream app/tab background
+    static const wxColour CardBg(255, 255, 255);        // white card surfaces
+    static const wxColour CardBorder(230, 222, 203);    // soft warm border for cards
+    static const wxColour RowAlt(251, 246, 234);        // subtle zebra stripe on list rows
+    static const wxColour Selection(255, 244, 214);     // selection fill (e.g. doer card)
+    static const wxColour SelectionBorder(255, 183, 27); // selection border/accent
+    static const wxColour TextPrimary(45, 42, 38);
+    static const wxColour TextMuted(110, 105, 98);
+    static const wxColour Purple(108, 92, 231);
+    static const wxColour Teal(0, 184, 148);
+    static const wxColour Coral(255, 107, 107);
+    static const wxColour Blue(84, 160, 255);
+    static const wxColour Amber(255, 159, 28);
+  }
+
   // A small owner-drawn rounded button used across the main tabs for a friendlier
   // look than a native wxButton. Fires a genuine wxEVT_BUTTON with its own id on
   // click, so every existing Bind(wxEVT_BUTTON, &MainFrame::OnX, this) call site
@@ -138,7 +155,7 @@ namespace ChoreApp
   class RoundedButton : public wxPanel {
   public:
     RoundedButton(wxWindow* parent, wxWindowID id, const wxString& label,
-      const wxColour& baseColor = wxColour(108, 92, 231), const wxSize& size = wxSize(120, 36))
+      const wxColour& baseColor = Palette::Purple, const wxSize& size = wxSize(120, 36))
       : wxPanel(parent, id, wxDefaultPosition, size, wxBORDER_NONE),
       baseColor(baseColor), hovered(false), pressed(false)
     {
@@ -307,7 +324,7 @@ namespace ChoreApp
 
     void OnPaint(wxPaintEvent&) {
       wxAutoBufferedPaintDC dc(this);
-      wxColour bg = selected ? wxColour(255, 244, 214) : *wxWHITE;
+      wxColour bg = selected ? Palette::Selection : Palette::CardBg;
       dc.SetBackground(wxBrush(bg));
       dc.Clear();
 
@@ -316,7 +333,7 @@ namespace ChoreApp
 
       wxRect rect = GetClientRect();
       gc->SetBrush(wxBrush(bg));
-      gc->SetPen(selected ? wxPen(wxColour(255, 183, 27), 2) : wxPen(wxColour(225, 225, 225), 1));
+      gc->SetPen(selected ? wxPen(Palette::SelectionBorder, 2) : wxPen(Palette::CardBorder, 1));
       gc->DrawRoundedRectangle(2, 2, rect.width - 4, rect.height - 4, 12);
 
       double d = rect.height - 20;
@@ -349,6 +366,56 @@ namespace ChoreApp
       delete gc;
     }
   };
+
+  // A plain rounded-rect container used to visually group related controls into a
+  // "card" (same visual language as DoerCardPanel, minus the click/selection state).
+  // Add content to GetInnerSizer() rather than calling SetSizer() directly, so
+  // children sit inset from the rounded corners instead of covering them.
+  class CardPanel : public wxPanel {
+  public:
+    CardPanel(wxWindow* parent, int cornerRadius = 14)
+      : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE), cornerRadius(cornerRadius)
+    {
+      SetBackgroundStyle(wxBG_STYLE_PAINT);
+      innerSizer = new wxBoxSizer(wxVERTICAL);
+      wxPanel::SetSizer(innerSizer);
+      Bind(wxEVT_PAINT, &CardPanel::OnPaint, this);
+    }
+
+    wxSizer* GetInnerSizer() const { return innerSizer; }
+
+  private:
+    int cornerRadius;
+    wxSizer* innerSizer;
+
+    void OnPaint(wxPaintEvent&) {
+      wxAutoBufferedPaintDC dc(this);
+      wxColour parentBg = GetParent() ? GetParent()->GetBackgroundColour() : Palette::Background;
+      dc.SetBackground(wxBrush(parentBg));
+      dc.Clear();
+
+      wxGraphicsContext* gc = wxGraphicsContext::Create(dc);
+      if (!gc) return;
+
+      wxRect rect = GetClientRect();
+      gc->SetBrush(wxBrush(Palette::CardBg));
+      gc->SetPen(wxPen(Palette::CardBorder, 1));
+      gc->DrawRoundedRectangle(1, 1, rect.width - 2, rect.height - 2, cornerRadius);
+
+      delete gc;
+    }
+  };
+
+  // A bold, slightly muted section label placed above a CardPanel (e.g. "All Chores").
+  wxStaticText* MakeSectionTitle(wxWindow* parent, const wxString& text) {
+    wxStaticText* title = new wxStaticText(parent, wxID_ANY, text);
+    wxFont font = title->GetFont();
+    font.SetWeight(wxFONTWEIGHT_BOLD);
+    font.SetPointSize(font.GetPointSize() + 1);
+    title->SetFont(font);
+    title->SetForegroundColour(Palette::TextPrimary);
+    return title;
+  }
 
   // Lets the user search chores by ID, name, or earnings, and view the results inline.
   class SearchDialog : public wxDialog {
@@ -934,7 +1001,7 @@ namespace ChoreApp
       string name = households[sel].displayName;
 
       if (path == registry.getLastOpenHouseholdPath()) {
-        wxMessageBox("Cannot delete the currently open household — switch to another one first.",
+        wxMessageBox("Cannot delete the currently open household - switch to another one first.",
           "Delete Blocked", wxOK | wxICON_WARNING, this);
         return;
       }
@@ -1002,10 +1069,13 @@ namespace ChoreApp
       SetFont(friendlyFont);
 
       BuildMenuBar();
-      BuildToolBar();
 
       wxPanel* panel = new wxPanel(this);
+      panel->SetBackgroundColour(Palette::Background);
       wxBoxSizer* rootSizer = new wxBoxSizer(wxVERTICAL);
+
+      BuildHeaderBar(panel, rootSizer);
+
       notebook = new wxNotebook(panel, wxID_ANY);
 
       BuildChoresTab();
@@ -1035,6 +1105,7 @@ namespace ChoreApp
   private:
     unique_ptr<ChoreManager> manager;
     HouseholdRegistry& householdRegistry;
+    wxStaticText* householdLabel;
     wxNotebook* notebook;
     wxListCtrl* choresList;
     wxTextCtrl* choreDetailText;
@@ -1062,7 +1133,8 @@ namespace ChoreApp
     string currentHistoryDate;
 
     void UpdateTitle() {
-      SetTitle("Chore Manager — " + manager->getHouseholdName());
+      SetTitle("Chore Manager - " + manager->getHouseholdName());
+      if (householdLabel) householdLabel->SetLabel(manager->getHouseholdName());
     }
 
     void BuildMenuBar() {
@@ -1140,26 +1212,48 @@ namespace ChoreApp
       Bind(wxEVT_MENU, &MainFrame::OnModifyProfile, this, ID_MODIFY_PROFILE);
     }
 
-    void BuildToolBar() {
-      wxToolBar* toolbar = CreateToolBar();
-      toolbar->AddTool(ID_NEW_CHORE, "New Chore", wxArtProvider::GetBitmap(wxART_NEW, wxART_TOOLBAR));
-      toolbar->AddTool(ID_DELETE_CHORE, "Delete", wxArtProvider::GetBitmap(wxART_DELETE, wxART_TOOLBAR));
-      toolbar->AddTool(ID_SAVE, "Save", wxArtProvider::GetBitmap(wxART_FILE_SAVE, wxART_TOOLBAR));
-      toolbar->AddTool(ID_SEARCH, "Search", wxArtProvider::GetBitmap(wxART_FIND, wxART_TOOLBAR));
-      toolbar->Realize();
+    // A slim custom app-bar replacing the dated native wxToolBar, matching the rest of
+    // the bubbly redesign. Shows the app/household identity on the left and the two
+    // actions that are meaningful from any tab (Save, Search) as RoundedButtons on the
+    // right; tab-specific actions (New/Delete/Modify Chore, etc.) stay on their tabs.
+    void BuildHeaderBar(wxPanel* panel, wxBoxSizer* rootSizer) {
+      wxPanel* header = new wxPanel(panel);
+      header->SetBackgroundColour(Palette::CardBg);
+      wxBoxSizer* headerSizer = new wxBoxSizer(wxHORIZONTAL);
 
-      Bind(wxEVT_TOOL, &MainFrame::OnNewChore, this, ID_NEW_CHORE);
-      Bind(wxEVT_TOOL, &MainFrame::OnDeleteChore, this, ID_DELETE_CHORE);
-      Bind(wxEVT_TOOL, &MainFrame::OnSave, this, ID_SAVE);
-      Bind(wxEVT_TOOL, &MainFrame::OnSearch, this, ID_SEARCH);
+      wxBoxSizer* titleSizer = new wxBoxSizer(wxVERTICAL);
+      wxStaticText* appTitle = new wxStaticText(header, wxID_ANY, "Chore Manager");
+      wxFont titleFont = appTitle->GetFont();
+      titleFont.SetPointSize(titleFont.GetPointSize() + 4);
+      titleFont.SetWeight(wxFONTWEIGHT_BOLD);
+      appTitle->SetFont(titleFont);
+      appTitle->SetForegroundColour(Palette::Purple);
+      titleSizer->Add(appTitle);
+      householdLabel = new wxStaticText(header, wxID_ANY, "");
+      householdLabel->SetForegroundColour(Palette::TextMuted);
+      titleSizer->Add(householdLabel);
+      headerSizer->Add(titleSizer, 1, wxALIGN_CENTER_VERTICAL | wxALL, 14);
+
+      RoundedButton* searchBtn = new RoundedButton(header, wxID_ANY, "Search", Palette::Blue, wxSize(90, 34));
+      RoundedButton* saveBtn = new RoundedButton(header, wxID_ANY, "Save", Palette::Teal, wxSize(90, 34));
+      headerSizer->Add(searchBtn, 0, wxALIGN_CENTER_VERTICAL | wxALL, 10);
+      headerSizer->Add(saveBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxTOP | wxBOTTOM, 10);
+
+      header->SetSizer(headerSizer);
+      rootSizer->Add(header, 0, wxEXPAND | wxBOTTOM, 6);
+
+      searchBtn->Bind(wxEVT_BUTTON, &MainFrame::OnSearch, this);
+      saveBtn->Bind(wxEVT_BUTTON, &MainFrame::OnSave, this);
     }
 
     void BuildChoresTab() {
       wxPanel* choresPanel = new wxPanel(notebook);
-      choresPanel->SetBackgroundColour(wxColour(255, 250, 240));
+      choresPanel->SetBackgroundColour(Palette::Background);
       wxBoxSizer* choresSizer = new wxBoxSizer(wxVERTICAL);
 
-      choresList = new wxListCtrl(choresPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
+      choresSizer->Add(MakeSectionTitle(choresPanel, "All Chores"), 0, wxLEFT | wxTOP, 12);
+      CardPanel* listCard = new CardPanel(choresPanel);
+      choresList = new wxListCtrl(listCard, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
       choresList->InsertColumn(0, "ID", wxLIST_FORMAT_LEFT, 40);
       choresList->InsertColumn(1, "Name", wxLIST_FORMAT_LEFT, 160);
       choresList->InsertColumn(2, "Category", wxLIST_FORMAT_LEFT, 100);
@@ -1167,19 +1261,23 @@ namespace ChoreApp
       choresList->InsertColumn(4, "Status", wxLIST_FORMAT_LEFT, 100);
       choresList->InsertColumn(5, "Priority", wxLIST_FORMAT_LEFT, 80);
       choresList->InsertColumn(6, "Frequency", wxLIST_FORMAT_LEFT, 100);
-      choresSizer->Add(choresList, 2, wxALL | wxEXPAND, 4);
+      listCard->GetInnerSizer()->Add(choresList, 1, wxALL | wxEXPAND, 12);
+      choresSizer->Add(listCard, 2, wxALL | wxEXPAND, 8);
 
-      choreDetailText = new wxTextCtrl(choresPanel, wxID_ANY, "", wxDefaultPosition, wxSize(-1, 120), wxTE_MULTILINE | wxTE_READONLY);
-      choresSizer->Add(choreDetailText, 1, wxALL | wxEXPAND, 4);
+      choresSizer->Add(MakeSectionTitle(choresPanel, "Details"), 0, wxLEFT, 12);
+      CardPanel* detailCard = new CardPanel(choresPanel);
+      choreDetailText = new wxTextCtrl(detailCard, wxID_ANY, "", wxDefaultPosition, wxSize(-1, 120), wxTE_MULTILINE | wxTE_READONLY | wxBORDER_NONE);
+      detailCard->GetInnerSizer()->Add(choreDetailText, 1, wxALL | wxEXPAND, 12);
+      choresSizer->Add(detailCard, 1, wxALL | wxEXPAND, 8);
 
       wxBoxSizer* choreBtnSizer = new wxBoxSizer(wxHORIZONTAL);
-      RoundedButton* newChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "New Chore", wxColour(0, 184, 148));
-      RoundedButton* deleteChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "Delete Selected", wxColour(255, 107, 107));
-      RoundedButton* modifyChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "Modify Selected", wxColour(108, 92, 231));
+      RoundedButton* newChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "New Chore", Palette::Teal);
+      RoundedButton* deleteChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "Delete Selected", Palette::Coral);
+      RoundedButton* modifyChoreBtn = new RoundedButton(choresPanel, wxID_ANY, "Modify Selected", Palette::Purple);
       choreBtnSizer->Add(newChoreBtn, 0, wxALL, 4);
       choreBtnSizer->Add(deleteChoreBtn, 0, wxALL, 4);
       choreBtnSizer->Add(modifyChoreBtn, 0, wxALL, 4);
-      choresSizer->Add(choreBtnSizer, 0, wxALIGN_LEFT);
+      choresSizer->Add(choreBtnSizer, 0, wxALIGN_LEFT | wxLEFT | wxBOTTOM, 8);
 
       choresPanel->SetSizer(choresSizer);
       notebook->AddPage(choresPanel, "Chores");
@@ -1192,31 +1290,35 @@ namespace ChoreApp
 
     void BuildChoreDoersTab() {
       wxPanel* doersPanel = new wxPanel(notebook);
-      doersPanel->SetBackgroundColour(wxColour(255, 250, 240));
+      doersPanel->SetBackgroundColour(Palette::Background);
       wxBoxSizer* rootSizer = new wxBoxSizer(wxHORIZONTAL);
 
       // Left: scrollable column of doer cards + Add/Delete/Edit-Profile actions.
       wxBoxSizer* leftSizer = new wxBoxSizer(wxVERTICAL);
-      doerCardsScroll = new wxScrolledWindow(doersPanel, wxID_ANY, wxDefaultPosition, wxSize(280, -1), wxVSCROLL | wxBORDER_NONE);
-      doerCardsScroll->SetBackgroundColour(doersPanel->GetBackgroundColour());
+      leftSizer->Add(MakeSectionTitle(doersPanel, "Chore Doers"), 0, wxLEFT | wxTOP, 8);
+      CardPanel* doerListCard = new CardPanel(doersPanel);
+      doerCardsScroll = new wxScrolledWindow(doerListCard, wxID_ANY, wxDefaultPosition, wxSize(260, -1), wxVSCROLL | wxBORDER_NONE);
+      doerCardsScroll->SetBackgroundColour(Palette::CardBg);
       doerCardsScroll->SetScrollRate(0, 10);
       doerCardsSizer = new wxBoxSizer(wxVERTICAL);
       doerCardsScroll->SetSizer(doerCardsSizer);
-      leftSizer->Add(doerCardsScroll, 1, wxALL | wxEXPAND, 4);
+      doerListCard->GetInnerSizer()->Add(doerCardsScroll, 1, wxALL | wxEXPAND, 10);
+      leftSizer->Add(doerListCard, 1, wxALL | wxEXPAND, 4);
 
       wxBoxSizer* doerBtnSizer = new wxBoxSizer(wxHORIZONTAL);
-      RoundedButton* addDoerBtn = new RoundedButton(doersPanel, wxID_ANY, "Add", wxColour(0, 184, 148), wxSize(70, 32));
-      RoundedButton* deleteDoerBtn = new RoundedButton(doersPanel, wxID_ANY, "Delete", wxColour(255, 107, 107), wxSize(70, 32));
-      RoundedButton* editProfileBtn = new RoundedButton(doersPanel, wxID_ANY, "Edit", wxColour(108, 92, 231), wxSize(70, 32));
+      RoundedButton* addDoerBtn = new RoundedButton(doersPanel, wxID_ANY, "Add", Palette::Teal, wxSize(70, 32));
+      RoundedButton* deleteDoerBtn = new RoundedButton(doersPanel, wxID_ANY, "Delete", Palette::Coral, wxSize(70, 32));
+      RoundedButton* editProfileBtn = new RoundedButton(doersPanel, wxID_ANY, "Edit", Palette::Purple, wxSize(70, 32));
       doerBtnSizer->Add(addDoerBtn, 0, wxALL, 4);
       doerBtnSizer->Add(deleteDoerBtn, 0, wxALL, 4);
       doerBtnSizer->Add(editProfileBtn, 0, wxALL, 4);
       leftSizer->Add(doerBtnSizer, 0, wxALIGN_LEFT | wxLEFT, 4);
       rootSizer->Add(leftSizer, 0, wxEXPAND);
 
-      // Right: profile panel for the selected doer + their assigned chores.
-      doerProfilePanel = new wxPanel(doersPanel);
-      doerProfilePanel->SetBackgroundColour(doersPanel->GetBackgroundColour());
+      // Right: profile panel for the selected doer + their assigned chores, in its own card.
+      CardPanel* profileCard = new CardPanel(doersPanel);
+      doerProfilePanel = new wxPanel(profileCard);
+      doerProfilePanel->SetBackgroundColour(Palette::CardBg);
       wxBoxSizer* profileSizer = new wxBoxSizer(wxVERTICAL);
 
       wxBoxSizer* headerSizer = new wxBoxSizer(wxHORIZONTAL);
@@ -1229,15 +1331,20 @@ namespace ChoreApp
       nameFont.SetPointSize(nameFont.GetPointSize() + 4);
       nameFont.SetWeight(wxFONTWEIGHT_BOLD);
       profileNameText->SetFont(nameFont);
+      profileNameText->SetForegroundColour(Palette::TextPrimary);
       headerTextSizer->Add(profileNameText);
       profileStreakText = new wxStaticText(doerProfilePanel, wxID_ANY, "");
+      profileStreakText->SetForegroundColour(Palette::TextMuted);
       headerTextSizer->Add(profileStreakText);
       profileEarningsText = new wxStaticText(doerProfilePanel, wxID_ANY, "");
+      profileEarningsText->SetForegroundColour(Palette::TextMuted);
       headerTextSizer->Add(profileEarningsText);
       headerSizer->Add(headerTextSizer, 1, wxALIGN_CENTER_VERTICAL | wxALL, 4);
       profileSizer->Add(headerSizer, 0, wxEXPAND);
 
-      profileSizer->Add(new wxStaticText(doerProfilePanel, wxID_ANY, "Notes:"), 0, wxLEFT | wxTOP, 8);
+      wxStaticText* notesLabel = new wxStaticText(doerProfilePanel, wxID_ANY, "Notes:");
+      notesLabel->SetForegroundColour(Palette::TextMuted);
+      profileSizer->Add(notesLabel, 0, wxLEFT | wxTOP, 8);
       profileNotesText = new wxTextCtrl(doerProfilePanel, wxID_ANY, "", wxDefaultPosition, wxSize(-1, 60), wxTE_MULTILINE | wxTE_READONLY);
       profileSizer->Add(profileNotesText, 0, wxALL | wxEXPAND, 8);
 
@@ -1249,9 +1356,9 @@ namespace ChoreApp
       profileSizer->Add(doerChoresList, 1, wxALL | wxEXPAND, 8);
 
       wxBoxSizer* actionBtnSizer = new wxBoxSizer(wxHORIZONTAL);
-      startBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Start", wxColour(84, 160, 255), wxSize(90, 34));
-      completeBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Complete", wxColour(0, 184, 148), wxSize(90, 34));
-      resetBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Reset", wxColour(255, 159, 28), wxSize(90, 34));
+      startBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Start", Palette::Blue, wxSize(90, 34));
+      completeBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Complete", Palette::Teal, wxSize(90, 34));
+      resetBtn = new RoundedButton(doerProfilePanel, wxID_ANY, "Reset", Palette::Amber, wxSize(90, 34));
       startBtn->Disable();
       completeBtn->Disable();
       resetBtn->Disable();
@@ -1261,7 +1368,8 @@ namespace ChoreApp
       profileSizer->Add(actionBtnSizer, 0, wxALIGN_LEFT | wxLEFT, 4);
 
       doerProfilePanel->SetSizer(profileSizer);
-      rootSizer->Add(doerProfilePanel, 1, wxEXPAND | wxALL, 4);
+      profileCard->GetInnerSizer()->Add(doerProfilePanel, 1, wxALL | wxEXPAND, 10);
+      rootSizer->Add(profileCard, 1, wxEXPAND | wxALL, 4);
 
       doersPanel->SetSizer(rootSizer);
       notebook->AddPage(doersPanel, "Chore Doers");
@@ -1280,13 +1388,13 @@ namespace ChoreApp
 
     void BuildHistoryTab() {
       wxPanel* historyPanel = new wxPanel(notebook);
-      historyPanel->SetBackgroundColour(wxColour(255, 250, 240));
+      historyPanel->SetBackgroundColour(Palette::Background);
       wxBoxSizer* historySizer = new wxBoxSizer(wxVERTICAL);
 
       wxBoxSizer* navSizer = new wxBoxSizer(wxHORIZONTAL);
-      RoundedButton* prevBtn = new RoundedButton(historyPanel, ID_PREV_DAY, "< Prev Day", wxColour(84, 160, 255), wxSize(110, 32));
-      RoundedButton* todayBtn = new RoundedButton(historyPanel, ID_TODAY_DAY, "Today", wxColour(0, 184, 148), wxSize(80, 32));
-      RoundedButton* nextBtn = new RoundedButton(historyPanel, ID_NEXT_DAY, "Next Day >", wxColour(84, 160, 255), wxSize(110, 32));
+      RoundedButton* prevBtn = new RoundedButton(historyPanel, ID_PREV_DAY, "< Prev Day", Palette::Blue, wxSize(110, 32));
+      RoundedButton* todayBtn = new RoundedButton(historyPanel, ID_TODAY_DAY, "Today", Palette::Teal, wxSize(80, 32));
+      RoundedButton* nextBtn = new RoundedButton(historyPanel, ID_NEXT_DAY, "Next Day >", Palette::Blue, wxSize(110, 32));
       navSizer->Add(prevBtn, 0, wxALL, 4);
       navSizer->Add(todayBtn, 0, wxALL, 4);
       navSizer->Add(nextBtn, 0, wxALL, 4);
@@ -1295,16 +1403,20 @@ namespace ChoreApp
       dateFont.SetPointSize(dateFont.GetPointSize() + 3);
       dateFont.SetWeight(wxFONTWEIGHT_BOLD);
       historyDateLabel->SetFont(dateFont);
+      historyDateLabel->SetForegroundColour(Palette::TextPrimary);
       navSizer->Add(historyDateLabel, 0, wxALIGN_CENTER_VERTICAL | wxALL, 8);
-      historySizer->Add(navSizer, 0, wxALIGN_LEFT);
+      historySizer->Add(navSizer, 0, wxALIGN_LEFT | wxLEFT | wxTOP, 8);
 
-      historyList = new wxListCtrl(historyPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
+      historySizer->Add(MakeSectionTitle(historyPanel, "Activity Log"), 0, wxLEFT, 12);
+      CardPanel* historyCard = new CardPanel(historyPanel);
+      historyList = new wxListCtrl(historyCard, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
       historyList->InsertColumn(0, "Time", wxLIST_FORMAT_LEFT, 90);
       historyList->InsertColumn(1, "Doer", wxLIST_FORMAT_LEFT, 140);
       historyList->InsertColumn(2, "Action", wxLIST_FORMAT_LEFT, 100);
       historyList->InsertColumn(3, "Chore", wxLIST_FORMAT_LEFT, 200);
       historyList->InsertColumn(4, "Earnings", wxLIST_FORMAT_LEFT, 80);
-      historySizer->Add(historyList, 1, wxALL | wxEXPAND, 4);
+      historyCard->GetInnerSizer()->Add(historyList, 1, wxALL | wxEXPAND, 12);
+      historySizer->Add(historyCard, 1, wxALL | wxEXPAND, 8);
 
       historyPanel->SetSizer(historySizer);
       notebook->AddPage(historyPanel, "History");
@@ -1326,6 +1438,7 @@ namespace ChoreApp
         historyList->SetItem(row, 2, event.action);
         historyList->SetItem(row, 3, event.choreName);
         historyList->SetItem(row, 4, "$" + to_string(event.earnings));
+        historyList->SetItemBackgroundColour(row, row % 2 == 0 ? Palette::CardBg : Palette::RowAlt);
       }
     }
 
@@ -1359,6 +1472,7 @@ namespace ChoreApp
         choresList->SetItem(row, 5, chore->toStringP(chore->getPriority()));
         choresList->SetItem(row, 6, chore->getFrequency());
         choresList->SetItemData(row, chore->getId());
+        choresList->SetItemBackgroundColour(row, row % 2 == 0 ? Palette::CardBg : Palette::RowAlt);
         if (chore->getId() == selectedId) {
           choresList->SetItemState(row, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED);
         }
@@ -1432,6 +1546,7 @@ namespace ChoreApp
         doerChoresList->SetItem(row, 1, chore->getName());
         doerChoresList->SetItem(row, 2, to_string(chore->getEarnings()));
         doerChoresList->SetItem(row, 3, chore->toStringS(chore->getStatus()));
+        doerChoresList->SetItemBackgroundColour(row, row % 2 == 0 ? Palette::CardBg : Palette::RowAlt);
       }
       UpdateDoerActionButtons();
     }
