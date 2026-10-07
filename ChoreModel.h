@@ -18,6 +18,7 @@
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <locale>
 
 using json = nlohmann::json;
 using namespace std;
@@ -27,6 +28,145 @@ namespace ChoreApp
 {
   enum class STATUS { NOT_STARTED, IN_PROGRESS, COMPLETED };
   enum class PRIORITY { LOW, MODERATE, HIGH };
+  enum class RecurrenceType { Once, Daily, Weekly, Monthly };
+
+  // How a chore repeats. Weekly is the only type that uses intervalWeeks/weekdays;
+  // an empty weekdays list means "any day this week is fine" rather than a specific
+  // day. This replaces the old freeform "frequency" string + "days" list, which were
+  // never actually read back by any scheduling logic.
+  struct Recurrence {
+    RecurrenceType type = RecurrenceType::Once;
+    int intervalWeeks = 1;    // Weekly only; 2 = "every 2 weeks" (old "bi-weekly")
+    vector<string> weekdays;  // Weekly only
+
+    bool operator==(const Recurrence&) const = default;
+
+    static string typeToString(RecurrenceType t) {
+      switch (t) {
+      case RecurrenceType::Daily: return "daily";
+      case RecurrenceType::Weekly: return "weekly";
+      case RecurrenceType::Monthly: return "monthly";
+      default: return "once";
+      }
+    }
+
+    static RecurrenceType typeFromString(const string& s) {
+      if (s == "daily") return RecurrenceType::Daily;
+      if (s == "weekly") return RecurrenceType::Weekly;
+      if (s == "monthly") return RecurrenceType::Monthly;
+      return RecurrenceType::Once;
+    }
+
+    json toJSON() const {
+      return json{
+        {"type", typeToString(type)},
+        {"interval_weeks", intervalWeeks},
+        {"weekdays", weekdays}
+      };
+    }
+
+    static Recurrence fromJSON(const json& j) {
+      Recurrence r;
+      r.type = typeFromString(j.value("type", string("once")));
+      r.intervalWeeks = j.value("interval_weeks", 1);
+      if (r.intervalWeeks < 1) r.intervalWeeks = 1;
+      if (j.contains("weekdays") && j["weekdays"].is_array()) {
+        r.weekdays = j["weekdays"].get<vector<string>>();
+      }
+      return r;
+    }
+
+    // Maps a legacy day string (any case, or a 3-letter abbreviation like "Mon") to
+    // its canonical "Monday".."Sunday" form used everywhere else in the app.
+    // Unrecognized entries are dropped rather than carried through verbatim — every
+    // consumer (computeNextDueDate, IsChoreScheduledForToday) matches by exact string
+    // equality against the canonical form, so a value that doesn't match ANY of them
+    // would otherwise silently and permanently hide that day forever with no error.
+    static string NormalizeWeekdayName(const string& raw) {
+      static const char* kCanonical[7] = {
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
+      };
+      string lower = raw;
+      for (auto& c : lower) c = (char)tolower((unsigned char)c);
+      for (const char* name : kCanonical) {
+        string candidate = name;
+        string candidateLower = candidate;
+        for (auto& c : candidateLower) c = (char)tolower((unsigned char)c);
+        if (lower == candidateLower || (lower.size() >= 3 && lower == candidateLower.substr(0, lower.size()))) {
+          return candidate;
+        }
+      }
+      return "";
+    }
+
+    static vector<string> NormalizeWeekdayNames(const vector<string>& days) {
+      vector<string> normalized;
+      for (const auto& day : days) {
+        string canonical = NormalizeWeekdayName(day);
+        if (!canonical.empty()) normalized.push_back(canonical);
+      }
+      return normalized;
+    }
+
+    // Derives a Recurrence from the pre-recurrence "frequency" string + "days" list,
+    // for households saved before this feature existed. Verified against every
+    // chore in TestData/households/default.json: daily/weekly/bi-weekly/monthly map
+    // directly, "twice a week" (with two explicit days) maps to weekly, and anything
+    // else falls back to Once (the historically-accurate "never auto-touched"
+    // behavior) unless explicit days were given, in which case those are trusted
+    // over the unparseable word.
+    static Recurrence fromLegacy(const string& frequency, const vector<string>& rawDays) {
+      Recurrence r;
+      string freq = frequency;
+      for (auto& c : freq) c = (char)tolower((unsigned char)c);
+      vector<string> days = NormalizeWeekdayNames(rawDays);
+
+      if (freq == "daily") {
+        r.type = RecurrenceType::Daily;
+      }
+      else if (freq == "monthly") {
+        r.type = RecurrenceType::Monthly;
+      }
+      else if (freq == "weekly") {
+        r.type = RecurrenceType::Weekly;
+        r.intervalWeeks = 1;
+        r.weekdays = days;
+      }
+      else if (freq == "bi-weekly" || freq == "biweekly") {
+        r.type = RecurrenceType::Weekly;
+        r.intervalWeeks = 2;
+        r.weekdays = days;
+      }
+      else if (!days.empty()) {
+        r.type = RecurrenceType::Weekly;
+        r.intervalWeeks = 1;
+        r.weekdays = days;
+      }
+      else {
+        r.type = RecurrenceType::Once;
+      }
+      return r;
+    }
+
+    // A short, parent-friendly description for list/detail views.
+    string describe() const {
+      switch (type) {
+      case RecurrenceType::Daily: return "Daily";
+      case RecurrenceType::Weekly: {
+        string base = (intervalWeeks <= 1) ? "Weekly" : ("Every " + to_string(intervalWeeks) + " weeks");
+        if (weekdays.empty()) return base;
+        string joined;
+        for (const auto& d : weekdays) {
+          if (!joined.empty()) joined += ", ";
+          joined += d.size() >= 3 ? d.substr(0, 3) : d;
+        }
+        return base + " (" + joined + ")";
+      }
+      case RecurrenceType::Monthly: return "Monthly";
+      default: return "One-time";
+      }
+    }
+  };
 
   // Capitalizes the first letter and lowercases the rest, e.g. "easy" -> "Easy".
   // Used only for migrating legacy "difficulty" values into category names.
@@ -80,11 +220,9 @@ namespace ChoreApp
   private:
     struct Preferences {
       bool notify;
-      string theme;  // Using a simple string
 
       Preferences(const json& j)
-        : notify(j.contains("notify") && !j["notify"].is_null() ? j["notify"].get<bool>() : false),
-        theme(j.contains("theme") && !j["theme"].is_null() ? j["theme"].get<string>() : "Default") {}
+        : notify(j.contains("notify") && !j["notify"].is_null() ? j["notify"].get<bool>() : false) {}
     };
 
     struct UserProfile {
@@ -119,7 +257,7 @@ namespace ChoreApp
       return json{
           {"username", userProfile.username},
           {"last_logged_in", userProfile.last_logged_in},
-          {"preferences", {{"notify", userProfile.preferences.notify}, {"theme", userProfile.preferences.theme}}}
+          {"preferences", {{"notify", userProfile.preferences.notify}}}
       };
     }
 
@@ -128,14 +266,12 @@ namespace ChoreApp
       result += "Username: " + userProfile.username + "\n";
       result += "Last Logged In: " + (!userProfile.last_logged_in.empty() ? userProfile.last_logged_in : "Never") + "\n";
       result += "Notifications: " + string(userProfile.preferences.notify ? "Enabled" : "Disabled") + "\n";
-      result += "Theme: " + (!userProfile.preferences.theme.empty() ? userProfile.preferences.theme : "Default") + "\n";
       return result;
     }
 
     string getUserName() const { return userProfile.username; }
     string getLastLoggedIn() const { return userProfile.last_logged_in; }
     string getNotify() const { return userProfile.preferences.notify ? "Enabled" : "Disabled"; }
-    string getTheme() const { return userProfile.preferences.theme.empty() ? "Default" : userProfile.preferences.theme; }
 
     void setUsername(const string& newUserName) {
       userProfile.username = newUserName.empty() ? "DefaultUser" : newUserName;
@@ -144,10 +280,6 @@ namespace ChoreApp
 
     void toggleNotify() {
       userProfile.preferences.notify = !userProfile.preferences.notify;
-    }
-
-    void toggleTheme() {
-      userProfile.preferences.theme = (userProfile.preferences.theme == "dark") ? "light" : "dark";
     }
   };
 
@@ -160,30 +292,28 @@ namespace ChoreApp
 
     string name;
     string description;
-    string frequency;
     string estimated_time;
     string notes;
     string location;
     string category; // Free-form, user-managed category name (see CategoryRegistry)
 
-    vector<string> days;
     vector<string> tools_required;
     vector<string> materials_needed;
     vector<string> tags;
 
     STATUS Status;
     PRIORITY Priority;
+    Recurrence recurrence;
+    string lastCompletedDate; // "YYYY-MM-DD", "" if never completed — drives rollover
 
   public:
     Chore(const json& j) {
       id = j["id"].is_null() ? -1 : j["id"].get<int>();
       name = j["name"].is_null() ? "" : j["name"].get<string>();
       description = j["description"].is_null() ? "" : j["description"].get<string>();
-      frequency = j["frequency"].is_null() ? "" : j["frequency"].get<string>();
       estimated_time = j["estimated_time"].is_null() ? "" : j["estimated_time"].get<string>();
       earnings = j["earnings"].is_null() ? 0 : j["earnings"].get<int>();
 
-      days = j["days"].is_null() ? vector<string>() : j["days"].get<vector<string>>();
       location = j["location"].is_null() ? "" : j["location"].get<string>();
       tools_required = j["tools_required"].is_null() ? vector<string>() : j["tools_required"].get<vector<string>>();
       materials_needed = j["materials_needed"].is_null() ? vector<string>() : j["materials_needed"].get<vector<string>>();
@@ -193,6 +323,30 @@ namespace ChoreApp
 
       Priority = parsePriority(j);
       Status = parseStatus(j);
+
+      if (j.contains("recurrence") && !j["recurrence"].is_null()) {
+        recurrence = Recurrence::fromJSON(j["recurrence"]);
+      }
+      else {
+        // Pre-recurrence household file: derive from the old frequency/days fields.
+        string legacyFrequency = j.value("frequency", string(""));
+        vector<string> legacyDays = (j.contains("days") && j["days"].is_array())
+          ? j["days"].get<vector<string>>() : vector<string>();
+        recurrence = Recurrence::fromLegacy(legacyFrequency, legacyDays);
+      }
+
+      if (j.contains("last_completed_date") && !j["last_completed_date"].is_null()) {
+        lastCompletedDate = j["last_completed_date"].get<string>();
+      }
+      else if (Status == STATUS::COMPLETED) {
+        // No historical completion date on file — anchor at today rather than
+        // assuming it was due in the past, so an old save doesn't get a chore
+        // yanked back to incomplete the instant this version loads it.
+        lastCompletedDate = FormatDateNow();
+      }
+      else {
+        lastCompletedDate = "";
+      }
     }
 
     Chore() = default;
@@ -215,6 +369,7 @@ namespace ChoreApp
     virtual string completeChore() {
       if (Status == STATUS::NOT_STARTED || Status == STATUS::IN_PROGRESS) {
         Status = STATUS::COMPLETED;
+        lastCompletedDate = FormatDateNow();
         return "Completed: " + name;
       }
       else {
@@ -237,10 +392,10 @@ namespace ChoreApp
           {"id", id},
           {"name", name},
           {"description", description},
-          {"frequency", frequency},
+          {"recurrence", recurrence.toJSON()},
+          {"last_completed_date", lastCompletedDate},
           {"estimated_time", estimated_time},
           {"earnings", earnings},
-          {"days", days},
           {"location", location},
           {"tools_required", tools_required},
           {"materials_needed", materials_needed},
@@ -256,10 +411,9 @@ namespace ChoreApp
       string result = "Chore ID: " + to_string(id) + "\n"
         "Name: " + name + "\n"
         "Description: " + description + "\n"
-        "Frequency: " + frequency + "\n"
+        "Repeats: " + recurrence.describe() + "\n"
         "Estimated Time: " + estimated_time + "\n"
         "Earnings: " + to_string(earnings) + "\n"
-        "Days: " + formatVector(days) + "\n"
         "Location: " + location + "\n"
         "Tools Required: " + formatVector(tools_required) + "\n"
         "Materials Needed: " + formatVector(materials_needed) + "\n"
@@ -285,10 +439,9 @@ namespace ChoreApp
       return (this->id == other.id &&
         this->name == other.name &&
         this->description == other.description &&
-        this->frequency == other.frequency &&
+        this->recurrence == other.recurrence &&
         this->estimated_time == other.estimated_time &&
         this->earnings == other.earnings &&
-        this->days == other.days &&
         this->location == other.location &&
         this->tools_required == other.tools_required &&
         this->materials_needed == other.materials_needed &&
@@ -312,17 +465,21 @@ namespace ChoreApp
     string getDescription() const { return description; }
     void setDescription(const string& newDescription) { description = newDescription; }
 
-    string getFrequency() const { return frequency; }
-    void setFrequency(const string& newFrequency) { frequency = newFrequency; }
+    const Recurrence& getRecurrence() const { return recurrence; }
+    void setRecurrence(const Recurrence& newRecurrence) { recurrence = newRecurrence; }
+
+    string getLastCompletedDate() const { return lastCompletedDate; }
+    // For callers that set Status directly to COMPLETED outside of completeChore()
+    // (e.g. the chore editor's status dropdown) and need to keep the rollover engine
+    // working — computeNextDueDate() treats an empty lastCompletedDate as "never
+    // completed" and will never schedule a next occurrence otherwise.
+    void setLastCompletedDate(const string& date) { lastCompletedDate = date; }
 
     string getEstimatedTime() const { return estimated_time; }
     void setEstimatedTime(const string& newTime) { estimated_time = newTime; }
 
     int getEarnings() const { return earnings; }
     void setEarnings(int newEarnings) { earnings = newEarnings; }
-
-    vector<string> getDays() const { return days; }
-    void setDays(const vector<string>& newDays) { days = newDays; }
 
     string getLocation() const { return location; }
     void setLocation(const string& newLocation) { location = newLocation; }
@@ -795,7 +952,7 @@ namespace ChoreApp
   struct HistoryEvent {
     string date;      // "YYYY-MM-DD" — for day filtering
     string timestamp;  // "YYYY-MM-DD HH:MM:SS" — for within-day ordering/display
-    string action;     // "assigned" | "started" | "completed" | "reset"
+    string action;     // "assigned" | "unassigned" | "started" | "completed" | "reset"
     int doerId;
     string doerName;
     int choreId;
@@ -985,6 +1142,26 @@ namespace ChoreApp
       return (it != Chores.end()) ? *it : nullptr;
     }
 
+    // Returns the chore doer currently holding this chore, or nullptr if it's unassigned.
+    // A chore's assignment isn't stored on the Chore itself — it's implicit in which
+    // doer's assignedChores container holds the shared_ptr — so this is the one place
+    // that answers "who has this chore" and everything else (the UI, assignChoreToDoer)
+    // should go through it rather than re-deriving the same scan.
+    shared_ptr<ChoreDoer> findAssignedDoer(int choreId) const {
+      for (const auto& doer : ChoreDoers) {
+        for (const auto& chore : doer->assignedChores.item()) {
+          if (chore->getId() == choreId) return doer;
+        }
+      }
+      return nullptr;
+    }
+
+    // Convenience for the UI: the assigned doer's name, or "" if unassigned.
+    string getAssignedDoerName(int choreId) const {
+      auto doer = findAssignedDoer(choreId);
+      return doer ? doer->getName() : "";
+    }
+
     const Container<Chore>& getChores() const { return Chores; }
     const Container<ChoreDoer>& getChoreDoers() const { return ChoreDoers; }
     const CategoryRegistry& getCategoryRegistry() const { return registry; }
@@ -1025,10 +1202,15 @@ namespace ChoreApp
           if (chore->getId() >= nextChoreId) nextChoreId = chore->getId() + 1;
         }
 
+        // Catch up any recurring chores that came due while the app wasn't running
+        // (or were never checked before this feature existed) before anything is
+        // shown to the user.
+        int resetCount = checkAndResetDueChores(FormatDateNow());
+
         // Persist the migration immediately so the on-disk file reflects the new
         // category-based model right away, rather than staying in the old format
         // until some unrelated later action happens to trigger a save.
-        if (migrated) {
+        if (migrated || resetCount > 0) {
           saveData();
         }
       }
@@ -1196,17 +1378,20 @@ namespace ChoreApp
       return output;
     }
 
-    void saveData() {
+    // Returns false if the file couldn't be written (permissions, disk full, a
+    // read-only install directory, etc.) so callers — in particular the explicit
+    // Save action — can tell the user their changes were NOT persisted instead of
+    // silently claiming success.
+    bool saveData() {
       j.clear();
       j = toJSON();
 
       ofstream file(dynamicFile);
-      if (file) {
-        file << setw(4) << j << endl;
-      }
-      // If the file can't be opened for writing (permissions, disk full, etc.) the
-      // save is silently skipped rather than crashing — a pre-existing limitation.
+      if (!file) return false;
+      file << setw(4) << j << endl;
+      bool ok = (bool)file;
       file.close();
+      return ok;
     }
 
     string displayChoreDoerList() {
@@ -1274,6 +1459,10 @@ namespace ChoreApp
       Chores.deleteItem(choreId);
       if (Chores.size() < sizeBefore) {
         choreCount--;
+        // Detach it from every doer holding it (normally at most one, but defensively
+        // all of them — e.g. hand-edited JSON — so no doer is left with a dangling
+        // shared_ptr<Chore> to something no longer in the main chore list).
+        for (auto& doer : ChoreDoers) doer->removeChore(choreId);
         return true;
       }
       return false;
@@ -1318,6 +1507,40 @@ namespace ChoreApp
 
       addChore(fields);
       return nextChoreId++;
+    }
+
+    // Seeds a curated set of common household chores for a household that's
+    // starting from a blank slate — removes the "empty spreadsheet" onboarding
+    // problem. Deliberately spans every recurrence type (daily/weekly/biweekly/
+    // monthly/one-time) so the feature is visible immediately. Returns how many
+    // were added.
+    int addStarterChores() {
+      struct Template { string name, description, category; int earnings; string priority; Recurrence recurrence; };
+      vector<Template> templates = {
+        {"Make Your Bed", "Straighten sheets, blankets, and pillows.", "Easy", 2, "low", {RecurrenceType::Daily, 1, {}}},
+        {"Wash the Dishes", "Wash, dry, and put away dishes from the sink.", "Easy", 5, "moderate", {RecurrenceType::Daily, 1, {}}},
+        {"Feed the Pets", "Fill food and water bowls.", "Easy", 3, "moderate", {RecurrenceType::Daily, 1, {}}},
+        {"Take Out the Trash", "Empty trash bins and replace bags.", "Easy", 3, "moderate", {RecurrenceType::Weekly, 1, {"Monday", "Thursday"}}},
+        {"Tidy Your Room", "Put away clothes, toys, and clutter.", "Medium", 8, "moderate", {RecurrenceType::Weekly, 1, {"Saturday"}}},
+        {"Vacuum the Living Room", "Vacuum carpets and rugs.", "Medium", 8, "moderate", {RecurrenceType::Weekly, 1, {"Sunday"}}},
+        {"Wipe Bathroom Counters", "Wipe down counters, sink, and mirror.", "Medium", 6, "moderate", {RecurrenceType::Weekly, 1, {"Wednesday"}}},
+        {"Take Out Recycling", "Empty recycling bins to the curb.", "Easy", 3, "low", {RecurrenceType::Weekly, 2, {"Tuesday"}}},
+        {"Mow the Lawn", "Mow the front and back yard.", "Hard", 15, "high", {RecurrenceType::Weekly, 1, {"Saturday"}}},
+        {"Deep Clean Your Closet", "Sort, fold, and organize everything.", "Medium", 12, "low", {RecurrenceType::Monthly, 1, {}}},
+        {"Help Plan a Family Meal", "Pick a recipe and help with the grocery list.", "Medium", 10, "low", {RecurrenceType::Once, 1, {}}},
+      };
+
+      for (const auto& t : templates) {
+        json fields;
+        fields["name"] = t.name;
+        fields["description"] = t.description;
+        fields["category"] = t.category;
+        fields["earnings"] = t.earnings;
+        fields["priority"] = t.priority;
+        fields["recurrence"] = t.recurrence.toJSON();
+        createChore(fields);
+      }
+      return (int)templates.size();
     }
 
     int countChoresInCategory(const string& name) const {
@@ -1369,6 +1592,11 @@ namespace ChoreApp
           for (auto& doer : ChoreDoers) {
             if (choreIndex < Chores.size()) {
               auto& chore = Chores[choreIndex++];
+              // Detach from whatever doer (if any) already holds this chore first —
+              // otherwise a chore assigned earlier via "Assign To..." ends up held by
+              // two doers at once, double-counting its earnings and status.
+              auto priorDoer = findAssignedDoer(chore->getId());
+              if (priorDoer) priorDoer->removeChore(chore->getId());
               doer->assignChore(chore);
               logEvent("assigned", doer, chore);
             }
@@ -1382,6 +1610,36 @@ namespace ChoreApp
       catch (const std::exception& e) {
         return string("Exception thrown in assignChoresRandomly: ") + e.what();
       }
+    }
+
+    // Assigns (or reassigns) one chore to one chore doer by name. If the chore is
+    // already held by a different doer, it's removed from them first, so a chore only
+    // ever has one owner at a time. Returns an empty string on success, or a description
+    // of what went wrong.
+    string assignChoreToDoer(int choreId, const string& doerName) {
+      auto chore = findChoreById(choreId);
+      if (!chore) return "Chore not found.";
+      auto newDoer = findChoreDoerByName(doerName);
+      if (!newDoer) return "Chore doer '" + doerName + "' not found.";
+
+      auto currentDoer = findAssignedDoer(choreId);
+      if (currentDoer && currentDoer->getName() == doerName) return ""; // already assigned here
+
+      if (currentDoer) currentDoer->removeChore(choreId);
+      newDoer->assignChore(chore);
+      logEvent("assigned", newDoer, chore);
+      return "";
+    }
+
+    // Unassigns a chore from whichever doer currently holds it, if any. A no-op
+    // (returns "") if the chore was already unassigned.
+    string unassignChore(int choreId) {
+      auto currentDoer = findAssignedDoer(choreId);
+      if (!currentDoer) return "";
+      auto chore = findChoreById(choreId);
+      currentDoer->removeChore(choreId);
+      if (chore) logEvent("unassigned", currentDoer, chore);
+      return "";
     }
 
     vector<shared_ptr<Chore>> searchByID(int id) {
@@ -1558,6 +1816,40 @@ namespace ChoreApp
       return streak;
     }
 
+    // Lifetime count of "completed" history events for this doer — used for
+    // milestone badges (1st / 10th / 50th chore, etc.).
+    int getDoerLifetimeCompletions(int doerId) const {
+      int count = 0;
+      for (const auto& event : history) {
+        if (event.doerId == doerId && event.action == "completed") count++;
+      }
+      return count;
+    }
+
+    // Resets every currently-COMPLETED chore whose next scheduled occurrence has
+    // arrived back to NOT_STARTED — status only, never touches assignment, so a
+    // recurring chore keeps its doer across occurrences — and logs a "reset" event
+    // for each one that has an assigned doer. Returns how many chores were reset,
+    // so callers know whether a save/refresh is actually warranted.
+    int checkAndResetDueChores(const string& today) {
+      int resetCount = 0;
+      for (auto& chore : Chores) {
+        if (chore->getStatus() != STATUS::COMPLETED) continue;
+        try {
+          string nextDue = computeNextDueDate(*chore);
+          if (nextDue.empty() || nextDue > today) continue;
+          chore->resetChore();
+          resetCount++;
+          auto doer = findAssignedDoer(chore->getId());
+          if (doer) logEvent("reset", doer, chore);
+        }
+        catch (const exception&) {
+          // A malformed date on one chore shouldn't stop the rest from being checked.
+        }
+      }
+      return resetCount;
+    }
+
   private:
     // Adds (or subtracts) whole days from a "YYYY-MM-DD" string, correctly normalizing
     // month/year rollovers via mktime(). Local to ChoreManager since it's only needed
@@ -1575,6 +1867,91 @@ namespace ChoreApp
       stringstream ss;
       ss << put_time(&normalized, "%Y-%m-%d");
       return ss.str();
+    }
+
+    // Adds calendar months, clamping the day-of-month to the target month's length
+    // instead of letting mktime() roll it into the month after (e.g. Jan 31 + 1 month
+    // must land on Feb 28/29, not Mar 3).
+    static string AddMonthsToDate(const string& yyyyMMdd, int deltaMonths) {
+      struct tm timeinfo = {};
+      sscanf_s(yyyyMMdd.c_str(), "%d-%d-%d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday);
+      int originalDay = timeinfo.tm_mday;
+      timeinfo.tm_year -= 1900;
+      timeinfo.tm_mon -= 1;
+      timeinfo.tm_hour = 12;
+      timeinfo.tm_mon += deltaMonths;
+
+      // Land on day 1 of the target month first so mktime() can't roll over based on
+      // a day-of-month that may not exist there yet.
+      struct tm firstOfMonth = timeinfo;
+      firstOfMonth.tm_mday = 1;
+      mktime(&firstOfMonth); // normalizes tm_year/tm_mon
+
+      // Day 0 of the following month == the last day of the target month.
+      struct tm lastOfMonth = firstOfMonth;
+      lastOfMonth.tm_mon += 1;
+      lastOfMonth.tm_mday = 0;
+      time_t lastDayTime = mktime(&lastOfMonth);
+      struct tm lastDayNorm;
+      localtime_s(&lastDayNorm, &lastDayTime);
+
+      firstOfMonth.tm_mday = min(originalDay, lastDayNorm.tm_mday);
+      time_t asTime = mktime(&firstOfMonth);
+      struct tm normalized;
+      localtime_s(&normalized, &asTime);
+      stringstream ss;
+      ss << put_time(&normalized, "%Y-%m-%d");
+      return ss.str();
+    }
+
+    static string WeekdayNameOf(const string& yyyyMMdd) {
+      struct tm timeinfo = {};
+      sscanf_s(yyyyMMdd.c_str(), "%d-%d-%d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday);
+      timeinfo.tm_year -= 1900;
+      timeinfo.tm_mon -= 1;
+      timeinfo.tm_hour = 12;
+      mktime(&timeinfo); // normalizes tm_wday from the date fields
+      stringstream ss;
+      // Pinned to the "C" locale: Recurrence::weekdays is always stored using the
+      // English names in kWeekdayFullNames (main.cpp), so %A must always produce
+      // English too — on a non-English Windows display language it otherwise never
+      // matches and every Weekly chore with specific days silently stops scheduling.
+      ss.imbue(std::locale::classic());
+      ss << put_time(&timeinfo, "%A");
+      return ss.str();
+    }
+
+  public:
+    // "" means "never auto-resets" — a one-time chore, or one that's never been
+    // completed yet (nothing to schedule the next occurrence from). Public (not
+    // just used internally by checkAndResetDueChores) so the GUI's "what's due
+    // today" view can respect a multi-week interval too, not just which weekday
+    // is checked off.
+    string computeNextDueDate(const Chore& chore) const {
+      const Recurrence& r = chore.getRecurrence();
+      string last = chore.getLastCompletedDate();
+      if (r.type == RecurrenceType::Once || last.empty()) return "";
+
+      switch (r.type) {
+      case RecurrenceType::Daily:
+        return AddDaysToDate(last, 1);
+      case RecurrenceType::Monthly:
+        return AddMonthsToDate(last, 1);
+      case RecurrenceType::Weekly: {
+        string floorDate = AddDaysToDate(last, max(1, r.intervalWeeks) * 7);
+        if (r.weekdays.empty()) return floorDate;
+        string candidate = floorDate;
+        for (int i = 0; i < 7; i++) {
+          if (find(r.weekdays.begin(), r.weekdays.end(), WeekdayNameOf(candidate)) != r.weekdays.end()) {
+            return candidate;
+          }
+          candidate = AddDaysToDate(candidate, 1);
+        }
+        return floorDate; // fallback, shouldn't happen for valid weekday names
+      }
+      default:
+        return "";
+      }
     }
   };
 
@@ -1596,6 +1973,19 @@ namespace ChoreApp
     string householdsDir;
     string appStatePath;
     string lastOpenPath;
+    string themeName;
+
+    // Rewrites the whole app_state.json from the in-memory fields — the only place
+    // that writes this file, so adding a new persisted field never means silently
+    // clobbering the others (setLastOpenHousehold and setThemeName used to each write
+    // their own single-key object, so whichever was called most recently won).
+    void saveAppState() const {
+      ofstream out(appStatePath);
+      out << setw(4) << json{
+        {"last_open_household_file", lastOpenPath},
+        {"theme", themeName}
+      };
+    }
 
     static string Slugify(const string& name) {
       string result;
@@ -1675,6 +2065,7 @@ namespace ChoreApp
         try {
           json state = json::parse(stateIn);
           lastOpenPath = state.value("last_open_household_file", string(""));
+          themeName = state.value("theme", string(""));
         }
         catch (...) {
         }
@@ -1690,8 +2081,16 @@ namespace ChoreApp
 
     void setLastOpenHousehold(const string& filePath) {
       lastOpenPath = filePath;
-      ofstream out(appStatePath);
-      out << setw(4) << json{ {"last_open_household_file", filePath} };
+      saveAppState();
+    }
+
+    // "" means no theme has ever been chosen — the caller falls back to its own
+    // default (the app's shipped look) rather than this class knowing theme names.
+    string getThemeName() const { return themeName; }
+
+    void setThemeName(const string& name) {
+      themeName = name;
+      saveAppState();
     }
 
     // Returns the new household's file path on success, or "" with errorMsg set.
